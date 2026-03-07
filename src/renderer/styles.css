@@ -982,15 +982,60 @@ html[data-theme="light"] .modal-backdrop {
   box-shadow: var(--shadow);
 }
 
-@media (max-width: 1080px) {
+@media (max-width: 860px) {
   .app-shell,
   .app-shell--collapsed {
     grid-template-columns: 1fr;
   }
 
   .sidebar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding-block: 10px;
     border-right: none;
     border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar__top,
+  .sidebar__bottom {
+    width: auto;
+  }
+
+  .sidebar__bottom {
+    margin-top: 0;
+  }
+
+  .project-list {
+    flex-direction: row;
+    align-items: stretch;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .sidebar--collapsed .project-list {
+    align-items: stretch;
+  }
+
+  .sidebar:not(.sidebar--collapsed) .project-card,
+  .sidebar:not(.sidebar--collapsed) .sidebar-empty-card {
+    flex: 0 0 220px;
+  }
+
+  .sidebar__settings-button {
+    width: auto;
+    min-width: 48px;
+    white-space: nowrap;
+  }
+
+  .sidebar--collapsed .sidebar__settings-button {
+    width: var(--sidebar-collapsed-tile);
+    min-width: var(--sidebar-collapsed-tile);
+  }
+
+  .workspace {
+    padding-inline: 10px;
   }
 
   .window-titlebar {
@@ -999,5 +1044,34 @@ html[data-theme="light"] .modal-backdrop {
 
   .tab-strip--titlebar {
     padding-right: 110px;
+  }
+}
+
+@media (max-width: 640px) {
+  .window-titlebar {
+    grid-template-columns: minmax(0, 120px) minmax(0, 1fr);
+  }
+
+  .tab-strip--titlebar {
+    padding-right: 78px;
+  }
+
+  .sidebar {
+    gap: 8px;
+    padding-inline: 10px;
+  }
+
+  .sidebar__controls .primary-button,
+  .sidebar__settings-button {
+    padding-inline: 10px;
+  }
+
+  .sidebar:not(.sidebar--collapsed) .project-card,
+  .sidebar:not(.sidebar--collapsed) .sidebar-empty-card {
+    flex-basis: 180px;
+  }
+
+  .workspace {
+    padding-inline: 6px;
   }
 }

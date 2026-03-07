@@ -76,8 +76,8 @@ async function createWindow(): Promise<void> {
   const windowState = loadWindowState(app.getPath("userData"));
   mainWindow = new BrowserWindow({
     ...toBrowserWindowOptions(windowState),
-    minWidth: 1080,
-    minHeight: 720,
+    minWidth: 720,
+    minHeight: 480,
     backgroundColor: "#0e1318",
     icon: APP_ICON_PATH,
     titleBarStyle: "hidden",
