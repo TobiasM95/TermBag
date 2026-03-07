@@ -27,9 +27,11 @@ type RenameTabState = {
 
 type ThemeMode = "dark" | "light";
 type TabAlignment = "left" | "center" | "right";
+type ProjectSortMode = "created" | "alphabetical";
 
 const THEME_STORAGE_KEY = "termbag-theme-mode";
 const TAB_ALIGNMENT_STORAGE_KEY = "termbag-tab-alignment";
+const PROJECT_SORT_STORAGE_KEY = "termbag-project-sort-mode";
 
 function getShellLabel(shellProfileId: string): string {
   switch (shellProfileId) {
@@ -98,6 +100,14 @@ export function App() {
     const stored = window.localStorage.getItem(TAB_ALIGNMENT_STORAGE_KEY);
     return stored === "center" || stored === "right" ? stored : "left";
   });
+  const [projectSortMode, setProjectSortMode] = useState<ProjectSortMode>(() => {
+    if (typeof window === "undefined") {
+      return "created";
+    }
+
+    const stored = window.localStorage.getItem(PROJECT_SORT_STORAGE_KEY);
+    return stored === "alphabetical" ? "alphabetical" : "created";
+  });
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
@@ -107,6 +117,10 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem(TAB_ALIGNMENT_STORAGE_KEY, tabAlignment);
   }, [tabAlignment]);
+
+  useEffect(() => {
+    window.localStorage.setItem(PROJECT_SORT_STORAGE_KEY, projectSortMode);
+  }, [projectSortMode]);
 
   useEffect(() => {
     if (!hasPreloadApi) {
@@ -146,6 +160,25 @@ export function App() {
   const selectedWorkspace = selectedProjectId ? workspaces[selectedProjectId] : undefined;
   const selectedProject =
     projects.find((project) => project.id === selectedProjectId) ?? selectedWorkspace?.project;
+
+  const sortedProjects = useMemo(() => {
+    const nextProjects = [...projects];
+    if (projectSortMode === "alphabetical") {
+      nextProjects.sort(
+        (left, right) =>
+          left.name.localeCompare(right.name, undefined, { sensitivity: "base" }) ||
+          left.createdAt.localeCompare(right.createdAt),
+      );
+      return nextProjects;
+    }
+
+    nextProjects.sort(
+      (left, right) =>
+        right.createdAt.localeCompare(left.createdAt) ||
+        left.name.localeCompare(right.name, undefined, { sensitivity: "base" }),
+    );
+    return nextProjects;
+  }, [projectSortMode, projects]);
 
   const activeTab = useMemo<WorkspaceTab | null>(() => {
     if (!selectedWorkspace) {
@@ -263,7 +296,7 @@ export function App() {
               </div>
             ) : null}
 
-            {projects.map((project) => {
+            {sortedProjects.map((project) => {
               const isActive = project.id === selectedProjectId;
               return (
                 <button
@@ -437,9 +470,11 @@ export function App() {
         <SettingsModal
           themeMode={themeMode}
           tabAlignment={tabAlignment}
+          projectSortMode={projectSortMode}
           onClose={() => setSettingsOpen(false)}
           onThemeChange={setThemeMode}
           onTabAlignmentChange={setTabAlignment}
+          onProjectSortModeChange={setProjectSortMode}
         />
       ) : null}
 
@@ -630,9 +665,11 @@ function FloatingError({ message }: FloatingErrorProps) {
 interface SettingsModalProps {
   themeMode: ThemeMode;
   tabAlignment: TabAlignment;
+  projectSortMode: ProjectSortMode;
   onClose(): void;
   onThemeChange(theme: ThemeMode): void;
   onTabAlignmentChange(alignment: TabAlignment): void;
+  onProjectSortModeChange(mode: ProjectSortMode): void;
 }
 
 interface ShellPickerModalProps {
@@ -690,9 +727,11 @@ function ShellPickerModal({
 function SettingsModal({
   themeMode,
   tabAlignment,
+  projectSortMode,
   onClose,
   onThemeChange,
   onTabAlignmentChange,
+  onProjectSortModeChange,
 }: SettingsModalProps) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -737,6 +776,25 @@ function SettingsModal({
               onClick={() => onTabAlignmentChange("right")}
             >
               Right
+            </button>
+          </div>
+        </div>
+        <div className="settings-group">
+          <span className="settings-group__label">Project order</span>
+          <div className="theme-toggle">
+            <button
+              type="button"
+              className={`ghost-button ${projectSortMode === "created" ? "theme-toggle__active" : ""}`}
+              onClick={() => onProjectSortModeChange("created")}
+            >
+              Created
+            </button>
+            <button
+              type="button"
+              className={`ghost-button ${projectSortMode === "alphabetical" ? "theme-toggle__active" : ""}`}
+              onClick={() => onProjectSortModeChange("alphabetical")}
+            >
+              A-Z
             </button>
           </div>
         </div>

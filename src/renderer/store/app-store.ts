@@ -53,10 +53,14 @@ function mergeWorkspace(
 }
 
 function upsertProject(projects: Project[], project: Project): Project[] {
-  const filtered = projects.filter((entry) => entry.id !== project.id);
-  return [project, ...filtered].sort((left, right) =>
-    right.updatedAt.localeCompare(left.updatedAt),
-  );
+  const existingIndex = projects.findIndex((entry) => entry.id === project.id);
+  if (existingIndex === -1) {
+    return [...projects, project];
+  }
+
+  const nextProjects = [...projects];
+  nextProjects[existingIndex] = project;
+  return nextProjects;
 }
 
 function applyRuntimeToWorkspaces(
