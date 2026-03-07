@@ -17,7 +17,7 @@ export function TerminalPane({ project, tab }: TerminalPaneProps) {
   const [localError, setLocalError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (tab.rootPathMissing || !hostRef.current) {
+    if (!hostRef.current) {
       return;
     }
 
@@ -27,25 +27,25 @@ export function TerminalPane({ project, tab }: TerminalPaneProps) {
       fontFamily: "'Cascadia Code', Consolas, monospace",
       fontSize: 13,
       theme: {
-        background: "#0b1014",
-        foreground: "#d7e0e8",
-        cursor: "#f6f7f9",
-        black: "#1f2a35",
-        red: "#ee6d6d",
-        green: "#87d38b",
-        yellow: "#f4cf6b",
-        blue: "#7ac1ff",
-        magenta: "#d9a7ff",
-        cyan: "#63d6d2",
-        white: "#d7e0e8",
-        brightBlack: "#4a5a69",
-        brightRed: "#ff8d8d",
-        brightGreen: "#a9f3ad",
-        brightYellow: "#ffe08a",
-        brightBlue: "#9bd7ff",
-        brightMagenta: "#e6c0ff",
-        brightCyan: "#7ceae6",
-        brightWhite: "#ffffff",
+        background: "#010101",
+        foreground: "#ff9a1f",
+        cursor: "#ffbf73",
+        black: "#050505",
+        red: "#ff5a36",
+        green: "#ff9a1f",
+        yellow: "#ffbf73",
+        blue: "#ff9a1f",
+        magenta: "#ff9a1f",
+        cyan: "#ff9a1f",
+        white: "#ffbf73",
+        brightBlack: "#5b3410",
+        brightRed: "#ff845d",
+        brightGreen: "#ffbf73",
+        brightYellow: "#ffd7a1",
+        brightBlue: "#ffbf73",
+        brightMagenta: "#ffbf73",
+        brightCyan: "#ffbf73",
+        brightWhite: "#fff0dc",
       },
     });
     const fitAddon = new FitAddon();
@@ -112,7 +112,7 @@ export function TerminalPane({ project, tab }: TerminalPaneProps) {
       disposeInput.dispose();
       terminal.dispose();
     };
-  }, [project.id, sessionRevision, setTabRuntime, tab.id, tab.rootPathMissing]);
+  }, [project.id, sessionRevision, setTabRuntime, tab.id]);
 
   const runtime = tab.runtime;
   const showSnapshot = Boolean(tab.snapshot?.serializedBuffer);
@@ -144,11 +144,11 @@ export function TerminalPane({ project, tab }: TerminalPaneProps) {
       ) : null}
 
       {tab.rootPathMissing ? (
-        <div className="terminal-state terminal-state--error">
-          <strong>Project path unavailable</strong>
+        <div className="terminal-state">
+          <strong>Default path unavailable</strong>
           <p>
-            The project root <code>{project.rootPath}</code> does not exist. Update the
-            project path before starting a shell.
+            The configured default path <code>{project.rootPath}</code> does not exist.
+            The shell was started in a fallback working directory instead.
           </p>
         </div>
       ) : null}
@@ -174,8 +174,8 @@ export function TerminalPane({ project, tab }: TerminalPaneProps) {
         </div>
       ) : null}
 
-      <div className={`terminal-live ${tab.rootPathMissing ? "terminal-live--disabled" : ""}`}>
-        {!tab.rootPathMissing ? <div ref={hostRef} className="terminal-host" /> : null}
+      <div className="terminal-live">
+        <div ref={hostRef} className="terminal-host" />
       </div>
 
       {showRestart ? (

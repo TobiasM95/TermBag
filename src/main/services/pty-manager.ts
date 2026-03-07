@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import { spawn, type IPty } from "node-pty";
 import {
   appendSnapshotChunk,
@@ -76,24 +77,7 @@ export class PtyManager {
       };
     }
 
-    if (!fs.existsSync(project.rootPath)) {
-      const runtime = this.createRuntime(tab, shellProfile, {
-        status: "error",
-        errorMessage: `Project path does not exist: ${project.rootPath}`,
-        currentCwd: null,
-      });
-      this.runtimes.set(tab.id, runtime);
-      this.emitStatus(runtime);
-      return {
-        runtime: this.toRuntimeSummary(runtime),
-        liveOutput: "",
-      };
-    }
-
-    const desiredCwd =
-      tab.lastKnownCwd && fs.existsSync(tab.lastKnownCwd)
-        ? tab.lastKnownCwd
-        : project.rootPath;
+    const desiredCwd = this.resolveSpawnCwd(project, tab);
 
     const runtime = this.createRuntime(tab, shellProfile, {
       currentCwd: desiredCwd,
@@ -434,5 +418,23 @@ export class PtyManager {
       currentCwd: runtime.currentCwd,
       shellProfileId: runtime.shellProfileId,
     };
+  }
+
+  private resolveSpawnCwd(project: Project, tab: SavedTerminalTab): string {
+    if (tab.lastKnownCwd && fs.existsSync(tab.lastKnownCwd)) {
+      return tab.lastKnownCwd;
+    }
+
+    const projectRoot = project.rootPath.trim();
+    if (projectRoot && fs.existsSync(projectRoot)) {
+      return projectRoot;
+    }
+
+    const homeDir = os.homedir();
+    if (homeDir && fs.existsSync(homeDir)) {
+      return homeDir;
+    }
+
+    return process.cwd();
   }
 }

@@ -8,7 +8,7 @@
   "scripts": {
     "postinstall": "pnpm run rebuild:native",
     "rebuild:native": "electron-rebuild -f -w better-sqlite3,node-pty",
-    "dev": "concurrently -k \"npm:dev:main\" \"npm:dev:preload\" \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "dev": "concurrently -k --success first \"npm:dev:main\" \"npm:dev:preload\" \"npm:dev:renderer\" \"npm:dev:electron\"",
     "dev:main": "tsc -p tsconfig.main.json --watch --preserveWatchOutput",
     "dev:preload": "tsc -p tsconfig.preload.json --watch --preserveWatchOutput",
     "dev:renderer": "vite",

@@ -43,6 +43,7 @@ export class AppService {
 
   getProjectWorkspace(projectId: string): ProjectWorkspace {
     const project = this.requireProject(projectId);
+    const rootPathMissing = this.isConfiguredProjectRootMissing(project);
     const tabs = this.database.listTabsForProject(projectId);
     const snapshots = new Map(
       this.database
@@ -54,7 +55,7 @@ export class AppService {
       ...tab,
       snapshot: snapshots.get(tab.id) ?? null,
       runtime: this.ptyManager.getRuntimeSummary(tab.id),
-      rootPathMissing: !fs.existsSync(project.rootPath),
+      rootPathMissing,
     }));
 
     return {
@@ -105,7 +106,7 @@ export class AppService {
     const project = this.requireProject(input.projectId);
     const shellProfileId = input.shellProfileId ?? project.shellProfileId;
     const shellProfile = this.requireShellProfile(shellProfileId);
-    const cwd = fs.existsSync(project.rootPath) ? project.rootPath : null;
+    const cwd = this.resolveProjectDefaultCwd(project);
 
     this.database.createTab({
       id: crypto.randomUUID(),
@@ -186,7 +187,7 @@ export class AppService {
 
   private createInitialTab(project: Project, shellProfileId: string): void {
     const shellProfile = this.requireShellProfile(shellProfileId);
-    const cwd = fs.existsSync(project.rootPath) ? project.rootPath : null;
+    const cwd = this.resolveProjectDefaultCwd(project);
     this.database.createTab({
       id: crypto.randomUUID(),
       projectId: project.id,
@@ -222,6 +223,20 @@ export class AppService {
       throw new Error(`Shell profile not found: ${shellProfileId}`);
     }
     return profile;
+  }
+
+  private resolveProjectDefaultCwd(project: Project): string | null {
+    const rootPath = project.rootPath.trim();
+    if (!rootPath) {
+      return null;
+    }
+
+    return fs.existsSync(rootPath) ? rootPath : null;
+  }
+
+  private isConfiguredProjectRootMissing(project: Project): boolean {
+    const rootPath = project.rootPath.trim();
+    return rootPath.length > 0 && !fs.existsSync(rootPath);
   }
 
   private selectWorkspaceTabId(tabs: WorkspaceTab[]): string | null {

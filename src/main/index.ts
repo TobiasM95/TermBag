@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, Menu, dialog, ipcMain, type OpenDialogOptions } from "electron";
 import { IPC_CHANNELS } from "../shared/ipc.js";
 import type {
   ActivateTabInput,
@@ -52,8 +52,10 @@ async function createWindow(): Promise<void> {
       preload: getPreloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: false,
     },
   });
+  mainWindow.setMenuBarVisibility(false);
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
@@ -69,6 +71,21 @@ async function createWindow(): Promise<void> {
 
 function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.bootstrap, () => appService!.bootstrap());
+  ipcMain.handle(IPC_CHANNELS.pickDirectory, async (_event, initialPath?: string) => {
+    const dialogOptions: OpenDialogOptions = {
+      properties: ["openDirectory"],
+      defaultPath: initialPath && initialPath.trim() ? initialPath : undefined,
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions);
+
+    if (result.canceled) {
+      return null;
+    }
+
+    return result.filePaths[0] ?? null;
+  });
   ipcMain.handle(IPC_CHANNELS.getProjectWorkspace, (_event, projectId: string) =>
     appService!.getProjectWorkspace(projectId),
   );
@@ -174,6 +191,10 @@ process.on("unhandledRejection", (reason) => {
 
 app.whenReady().then(bootstrapApp).catch((error) => {
   void showFatalStartupError(error);
+});
+
+app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
 });
 
 app.on("window-all-closed", () => {

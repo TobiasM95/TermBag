@@ -15,6 +15,10 @@ type ModalState =
   | null;
 
 export function App() {
+  const hasPreloadApi =
+    typeof window !== "undefined" && typeof window.termbag !== "undefined";
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
   const {
     bootstrapped,
     loading,
@@ -44,14 +48,21 @@ export function App() {
   const [recallNotice, setRecallNotice] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!hasPreloadApi) {
+      return;
+    }
     void bootstrap();
-  }, [bootstrap]);
+  }, [bootstrap, hasPreloadApi]);
 
   useEffect(() => {
+    if (!hasPreloadApi) {
+      return;
+    }
+
     return window.termbag.onTerminalEvent((event) => {
       applyTerminalEvent(event);
     });
-  }, [applyTerminalEvent]);
+  }, [applyTerminalEvent, hasPreloadApi]);
 
   useEffect(() => {
     if (selectedProjectId && !workspaces[selectedProjectId]) {
@@ -116,70 +127,115 @@ export function App() {
     setModalState(null);
   };
 
+  if (!hasPreloadApi) {
+    return (
+      <div className="fatal-screen">
+        <div className="fatal-screen__panel">
+          <h1>Preload bridge unavailable</h1>
+          <p>
+            The renderer could not find <code>window.termbag</code>, so Electron did
+            not expose the preload API correctly.
+          </p>
+          <p>
+            Rebuild the Electron outputs and restart the app. If this keeps happening,
+            the preload script is not loading.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="sidebar__header">
-          <div>
-            <h1>TermBag</h1>
-            <p>Local-first terminal workspaces for Windows projects.</p>
-          </div>
-          <button type="button" className="primary-button" onClick={() => setModalState({ mode: "create" })}>
-            New project
+    <div className={`app-shell ${sidebarCollapsed ? "app-shell--collapsed" : ""}`}>
+      <aside className={`sidebar ${sidebarCollapsed ? "sidebar--collapsed" : ""}`}>
+        <div className="sidebar__top">
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => setSidebarCollapsed((value) => !value)}
+            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {sidebarCollapsed ? ">" : "<"}
           </button>
+          {!sidebarCollapsed ? (
+            <div className="sidebar__controls">
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => setModalState({ mode: "create" })}
+              >
+                New project
+              </button>
+            </div>
+          ) : null}
         </div>
 
-        <div className="sidebar__section-title">Projects</div>
         <div className="project-list">
+          {projects.length === 0 ? (
+            <div className="sidebar-empty-card">
+              {!sidebarCollapsed ? (
+                <>
+                  <strong>No projects saved</strong>
+                  <p>Create your first project to start opening tabs.</p>
+                </>
+              ) : (
+                <strong>0</strong>
+              )}
+            </div>
+          ) : null}
+
           {projects.map((project) => {
             const isActive = project.id === selectedProjectId;
             return (
               <button
                 key={project.id}
                 type="button"
-                className={`project-card ${isActive ? "project-card--active" : ""}`}
+                className={`project-card ${isActive ? "project-card--active" : ""} ${sidebarCollapsed ? "project-card--collapsed" : ""}`}
                 onClick={() => selectProject(project.id)}
+                title={sidebarCollapsed ? project.name : undefined}
               >
-                <span className="project-card__name">{project.name}</span>
-                <span className="project-card__path">{project.rootPath}</span>
-                <span className="project-card__meta">
-                  {shellProfiles.find((profile) => profile.id === project.shellProfileId)?.label ??
-                    project.shellProfileId}
-                </span>
-                <span className="project-card__actions">
-                  <span
-                    className="link-button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setModalState({ mode: "edit", project });
-                    }}
-                  >
-                    Edit
+                {sidebarCollapsed ? (
+                  <span className="project-card__mono">
+                    {project.name.trim().charAt(0).toUpperCase() || "?"}
                   </span>
-                  <span
-                    className="link-button danger"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (window.confirm(`Delete project "${project.name}"?`)) {
-                        void deleteProject(project.id);
-                      }
-                    }}
-                  >
-                    Delete
-                  </span>
-                </span>
+                ) : (
+                  <>
+                    <span className="project-card__name">{project.name}</span>
+                    <span className="project-card__path">
+                      {project.rootPath ? `Default path: ${project.rootPath}` : "No default path"}
+                    </span>
+                    <span className="project-card__meta">
+                      {shellProfiles.find((profile) => profile.id === project.shellProfileId)?.label ??
+                        project.shellProfileId}
+                    </span>
+                    <span className="project-card__actions">
+                      <span
+                        className="link-button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setModalState({ mode: "edit", project });
+                        }}
+                      >
+                        Edit
+                      </span>
+                      <span
+                        className="link-button danger"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (window.confirm(`Delete project "${project.name}"?`)) {
+                            void deleteProject(project.id);
+                          }
+                        }}
+                      >
+                        Delete
+                      </span>
+                    </span>
+                  </>
+                )}
               </button>
             );
           })}
-        </div>
-
-        <div className="sidebar__footer">
-          <strong>Persistence is always on.</strong>
-          <p>
-            Commands, tab snapshots, cwd state, and project data are stored locally on this
-            machine.
-          </p>
-          <p>History overlay: <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>R</kbd></p>
         </div>
       </aside>
 
@@ -196,8 +252,18 @@ export function App() {
           <div className="empty-state">
             <h2>No projects yet</h2>
             <p>Create a project to start restoring and grouping terminal tabs.</p>
-            <button type="button" className="primary-button" onClick={() => setModalState({ mode: "create" })}>
-              Create first project
+            <ProjectBootstrapPanel
+              shellProfiles={shellProfiles}
+              onSubmit={async (input) => {
+                await createProject(input);
+              }}
+            />
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => setModalState({ mode: "create" })}
+            >
+              Open full project form
             </button>
           </div>
         ) : null}
@@ -207,7 +273,11 @@ export function App() {
             <header className="workspace__header">
               <div>
                 <h2>{selectedProject.name}</h2>
-                <p>{selectedProject.rootPath}</p>
+                <p className="workspace__subtext">
+                  {selectedProject.rootPath
+                    ? `Default path for new tabs: ${selectedProject.rootPath}`
+                    : "No default path configured for new tabs"}
+                </p>
               </div>
               <div className="workspace__header-actions">
                 <button
@@ -243,7 +313,7 @@ export function App() {
                       void closeTab(tab.id);
                     }}
                   >
-                    ×
+                    x
                   </span>
                 </button>
               ))}
@@ -289,6 +359,70 @@ export function App() {
   );
 }
 
+interface ProjectBootstrapPanelProps {
+  shellProfiles: ShellProfileAvailability[];
+  onSubmit(input: CreateProjectInput): Promise<void>;
+}
+
+function ProjectBootstrapPanel({
+  shellProfiles,
+  onSubmit,
+}: ProjectBootstrapPanelProps) {
+  const [name, setName] = useState("");
+  const [rootPath, setRootPath] = useState("");
+  const [shellProfileId, setShellProfileId] = useState(
+    shellProfiles.find((profile) => profile.available)?.id ?? "cmd",
+  );
+
+  return (
+    <div className="bootstrap-panel">
+      <label>
+        <span>Project name</span>
+        <input
+          value={name}
+          placeholder="My repo"
+          onChange={(event) => setName(event.target.value)}
+        />
+      </label>
+      <label>
+        <span>Default path</span>
+        <DirectoryField
+          value={rootPath}
+          placeholder="Optional default working directory"
+          onChange={setRootPath}
+        />
+      </label>
+      <label>
+        <span>Shell profile</span>
+        <select
+          value={shellProfileId}
+          onChange={(event) => setShellProfileId(event.target.value)}
+        >
+          {shellProfiles.map((profile) => (
+            <option key={profile.id} value={profile.id} disabled={!profile.available}>
+              {profile.label}
+              {profile.available ? "" : " (Unavailable)"}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button
+        type="button"
+        className="primary-button"
+        onClick={() =>
+          void onSubmit({
+            name,
+            rootPath,
+            shellProfileId,
+          })
+        }
+      >
+        Create first project
+      </button>
+    </div>
+  );
+}
+
 interface ProjectModalProps {
   shellProfiles: ShellProfileAvailability[];
   initialProject: Project | null;
@@ -305,7 +439,9 @@ function ProjectModal({
   const [name, setName] = useState(initialProject?.name ?? "");
   const [rootPath, setRootPath] = useState(initialProject?.rootPath ?? "");
   const [shellProfileId, setShellProfileId] = useState(
-    initialProject?.shellProfileId ?? shellProfiles.find((profile) => profile.available)?.id ?? "cmd",
+    initialProject?.shellProfileId ??
+      shellProfiles.find((profile) => profile.available)?.id ??
+      "cmd",
   );
 
   return (
@@ -317,8 +453,8 @@ function ProjectModal({
           <input value={name} onChange={(event) => setName(event.target.value)} />
         </label>
         <label>
-          <span>Root path</span>
-          <input value={rootPath} onChange={(event) => setRootPath(event.target.value)} />
+          <span>Default path</span>
+          <DirectoryField value={rootPath} onChange={setRootPath} />
         </label>
         <label>
           <span>Shell profile</span>
@@ -366,6 +502,43 @@ function ProjectModal({
   );
 }
 
+interface DirectoryFieldProps {
+  value: string;
+  onChange(value: string): void;
+  placeholder?: string;
+}
+
+function DirectoryField({ value, onChange, placeholder }: DirectoryFieldProps) {
+  return (
+    <div className="directory-field">
+      <input value={value} placeholder={placeholder} readOnly />
+      <button
+        type="button"
+        className="ghost-button"
+        onClick={async () => {
+          const selected = await window.termbag.pickDirectory(value);
+          if (selected) {
+            onChange(selected);
+          }
+        }}
+      >
+        Browse
+      </button>
+      {value ? (
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Clear directory"
+          title="Clear directory"
+          onClick={() => onChange("")}
+        >
+          x
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 interface HistoryOverlayProps {
   activeTabId: string;
   entries: Array<{
@@ -409,7 +582,9 @@ function HistoryOverlay({
 
         <div className="history-list">
           {isLoading ? <p>Loading history...</p> : null}
-          {!isLoading && entries.length === 0 ? <p>No commands captured for this project yet.</p> : null}
+          {!isLoading && entries.length === 0 ? (
+            <p>No commands captured for this project yet.</p>
+          ) : null}
           {entries.map((entry) => (
             <button
               key={entry.id}
