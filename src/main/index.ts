@@ -46,9 +46,18 @@ let fatalErrorShown = false;
 let quitting = false;
 const CURRENT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(CURRENT_DIR, "../..");
+const TITLEBAR_HEIGHT = 32;
 
 function getPreloadPath(): string {
   return path.resolve(CURRENT_DIR, "../preload/index.js");
+}
+
+function getTitleBarOverlayForTheme(theme: "dark" | "light") {
+  return {
+    color: theme === "dark" ? "#080808" : "#ffffff",
+    symbolColor: theme === "dark" ? "#e08421" : "#111111",
+    height: TITLEBAR_HEIGHT,
+  };
 }
 
 async function createWindow(): Promise<void> {
@@ -58,6 +67,8 @@ async function createWindow(): Promise<void> {
     minWidth: 1080,
     minHeight: 720,
     backgroundColor: "#0e1318",
+    titleBarStyle: "hidden",
+    titleBarOverlay: getTitleBarOverlayForTheme("dark"),
     webPreferences: {
       preload: getPreloadPath(),
       contextIsolation: true,
@@ -112,6 +123,13 @@ function registerIpcHandlers(): void {
     }
 
     return result.filePaths[0] ?? null;
+  });
+  ipcMain.handle(IPC_CHANNELS.setWindowTheme, (_event, theme: "dark" | "light") => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    mainWindow.setTitleBarOverlay(getTitleBarOverlayForTheme(theme));
   });
   ipcMain.handle(IPC_CHANNELS.getProjectWorkspace, (_event, projectId: string) =>
     appService!.getProjectWorkspace(projectId),

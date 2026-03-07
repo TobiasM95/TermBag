@@ -51,12 +51,14 @@ html,
 body,
 #root {
   margin: 0;
+  height: 100%;
   min-height: 100%;
   font-family: "Segoe UI", "SF Pro Display", sans-serif;
   background:
     radial-gradient(circle at top left, rgba(224, 132, 33, 0.12), transparent 20%),
     linear-gradient(180deg, var(--bg) 0%, var(--bg) 100%);
   color: var(--text);
+  overflow: hidden;
 }
 
 html[data-theme="light"] body,
@@ -85,12 +87,22 @@ kbd {
 .app-shell {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
-  min-height: 100vh;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
   transition: grid-template-columns 180ms ease;
 }
 
 .app-shell--collapsed {
   grid-template-columns: var(--sidebar-collapsed-width) minmax(0, 1fr);
+}
+
+.app-frame {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -100,6 +112,7 @@ kbd {
   padding: var(--sidebar-padding);
   border-right: 1px solid var(--border);
   background: var(--bg-panel);
+  min-height: 0;
   overflow-x: hidden;
 }
 
@@ -351,8 +364,9 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 0;
-  height: 100vh;
+  height: 100%;
   min-width: 0;
+  min-height: 0;
   padding: 0 16px;
   overflow: hidden;
 }
@@ -364,6 +378,33 @@ kbd {
   min-height: 0;
 }
 
+.window-titlebar {
+  display: grid;
+  grid-template-columns: minmax(0, 240px) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  max-height: 32px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  -webkit-app-region: drag;
+}
+
+.window-titlebar__project {
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 0 0 0 10px;
+  color: var(--text-strong);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-app-region: drag;
+}
+
 .tab-strip {
   display: flex;
   gap: 4px;
@@ -373,6 +414,16 @@ kbd {
   border: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
+}
+
+.tab-strip--titlebar {
+  min-width: 0;
+  height: 100%;
+  align-items: center;
+  padding-right: 150px;
+  border: none;
+  background: transparent;
+  -webkit-app-region: drag;
 }
 
 .tab-strip--left {
@@ -391,14 +442,16 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
+  padding: 4px 10px;
   color: var(--text);
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 700;
   line-height: 1;
-  min-height: 32px;
+  min-height: 26px;
   border-top: none;
   border-bottom: none;
+  -webkit-app-region: no-drag;
 }
 
 .tab-chip--active {
@@ -808,5 +861,13 @@ html[data-theme="light"] .modal-backdrop {
   .sidebar {
     border-right: none;
     border-bottom: 1px solid var(--border);
+  }
+
+  .window-titlebar {
+    grid-template-columns: minmax(0, 180px) minmax(0, 1fr);
+  }
+
+  .tab-strip--titlebar {
+    padding-right: 110px;
   }
 }

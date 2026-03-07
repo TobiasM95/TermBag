@@ -119,7 +119,10 @@ export function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
     window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
-  }, [themeMode]);
+    if (hasPreloadApi) {
+      void window.termbag.setWindowTheme(themeMode);
+    }
+  }, [hasPreloadApi, themeMode]);
 
   useEffect(() => {
     window.localStorage.setItem(TAB_ALIGNMENT_STORAGE_KEY, tabAlignment);
@@ -271,7 +274,64 @@ export function App() {
 
   return (
     <>
-      <div className={`app-shell ${sidebarCollapsed ? "app-shell--collapsed" : ""}`}>
+      <div className="app-frame">
+        <div className="window-titlebar">
+          <div className="window-titlebar__project" title={selectedProject?.name ?? ""}>
+            {selectedProject?.name ?? ""}
+          </div>
+          <div className={`tab-strip tab-strip--titlebar tab-strip--${tabAlignment}`}>
+            {selectedWorkspace?.tabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`tab-chip ${activeTab?.id === tab.id ? "tab-chip--active" : ""}`}
+                onClick={() => setSelectedTab(selectedWorkspace.project.id, tab.id)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setSelectedTab(selectedWorkspace.project.id, tab.id);
+                  setTabContextMenu({
+                    tabId: tab.id,
+                    x: event.clientX,
+                    y: event.clientY,
+                  });
+                }}
+              >
+                <span>{tab.title}</span>
+                <span
+                  className="tab-chip__close"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void closeTab(tab.id);
+                  }}
+                >
+                  x
+                </span>
+              </button>
+            )) ?? null}
+            {selectedProject ? (
+              <>
+                <button
+                  type="button"
+                  className="tab-chip tab-chip--action"
+                  onClick={() => void createTab({ projectId: selectedProject.id })}
+                  title="New tab with default shell"
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  className="tab-chip tab-chip--action"
+                  onClick={() => setShellPickerOpen(true)}
+                  title="New tab with selected shell"
+                >
+                  *
+                </button>
+              </>
+            ) : null}
+          </div>
+        </div>
+        <div className={`app-shell ${sidebarCollapsed ? "app-shell--collapsed" : ""}`}>
         <aside className={`sidebar ${sidebarCollapsed ? "sidebar--collapsed" : ""}`}>
           <div className="sidebar__top">
             <button
@@ -409,54 +469,6 @@ export function App() {
 
           {selectedProject && selectedWorkspace ? (
             <div className="workspace-session">
-              <div className={`tab-strip tab-strip--${tabAlignment}`}>
-                {selectedWorkspace.tabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    className={`tab-chip ${activeTab?.id === tab.id ? "tab-chip--active" : ""}`}
-                    onClick={() => setSelectedTab(selectedWorkspace.project.id, tab.id)}
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setSelectedTab(selectedWorkspace.project.id, tab.id);
-                      setTabContextMenu({
-                        tabId: tab.id,
-                        x: event.clientX,
-                        y: event.clientY,
-                      });
-                    }}
-                  >
-                    <span>{tab.title}</span>
-                    <span
-                      className="tab-chip__close"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void closeTab(tab.id);
-                      }}
-                    >
-                      x
-                    </span>
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  className="tab-chip tab-chip--action"
-                  onClick={() => void createTab({ projectId: selectedProject.id })}
-                  title="New tab with default shell"
-                >
-                  +
-                </button>
-                <button
-                  type="button"
-                  className="tab-chip tab-chip--action"
-                  onClick={() => setShellPickerOpen(true)}
-                  title="New tab with selected shell"
-                >
-                  *
-                </button>
-              </div>
-
               {activeTab ? (
                 <TerminalPane
                   project={selectedProject}
@@ -467,6 +479,7 @@ export function App() {
             </div>
           ) : null}
         </main>
+      </div>
       </div>
 
       {error ? <FloatingError message={error} /> : null}

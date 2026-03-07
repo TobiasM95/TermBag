@@ -15,4 +15,5 @@ export const IPC_CHANNELS = {
   listHistory: "history:list",
   recallHistory: "history:recall",
   terminalEvent: "terminal:event",
+  setWindowTheme: "window:setTheme",
 } as const;

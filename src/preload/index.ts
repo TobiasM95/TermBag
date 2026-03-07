@@ -22,6 +22,8 @@ const api: TermBagApi = {
   bootstrap: () => ipcRenderer.invoke(IPC_CHANNELS.bootstrap) as Promise<BootstrapData>,
   pickDirectory: (initialPath?: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.pickDirectory, initialPath) as Promise<string | null>,
+  setWindowTheme: (theme) =>
+    ipcRenderer.invoke(IPC_CHANNELS.setWindowTheme, theme) as Promise<void>,
   getProjectWorkspace: (projectId) =>
     ipcRenderer.invoke(IPC_CHANNELS.getProjectWorkspace, projectId) as Promise<ProjectWorkspace>,
   createProject: (input: CreateProjectInput) =>
