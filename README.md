@@ -4,6 +4,16 @@ TermBag is a Windows-first desktop app for keeping terminal work organized by pr
 
 It groups tabs under projects, remembers what you were working on, restores visible history on restart, and keeps the actual shell experience front and center.
 
+## Screenshots
+
+### Dark Theme
+
+![TermBag dark theme](build/main-view-dark.png)
+
+### Light Theme
+
+![TermBag light theme](build/main-view-light.png)
+
 ## Current Status
 
 This repository currently contains the **Phase 1** implementation.
