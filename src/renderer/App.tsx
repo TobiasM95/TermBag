@@ -32,6 +32,7 @@ type ProjectSortMode = "created" | "alphabetical";
 const THEME_STORAGE_KEY = "termbag-theme-mode";
 const TAB_ALIGNMENT_STORAGE_KEY = "termbag-tab-alignment";
 const PROJECT_SORT_STORAGE_KEY = "termbag-project-sort-mode";
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "termbag-sidebar-collapsed";
 
 function getShellLabel(shellProfileId: string): string {
   switch (shellProfileId) {
@@ -82,7 +83,13 @@ export function App() {
   const [shellPickerOpen, setShellPickerOpen] = useState(false);
   const [tabContextMenu, setTabContextMenu] = useState<TabContextMenuState>(null);
   const [renameTabState, setRenameTabState] = useState<RenameTabState>(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true";
+  });
   const [recallNotice, setRecallNotice] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     if (typeof window === "undefined") {
@@ -121,6 +128,13 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem(PROJECT_SORT_STORAGE_KEY, projectSortMode);
   }, [projectSortMode]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      SIDEBAR_COLLAPSED_STORAGE_KEY,
+      sidebarCollapsed ? "true" : "false",
+    );
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     if (!hasPreloadApi) {

@@ -41,6 +41,7 @@ interface AppState {
 }
 
 const LAST_ACTIVE_TABS_STORAGE_KEY = "termbag-last-active-tabs";
+const SELECTED_PROJECT_STORAGE_KEY = "termbag-selected-project-id";
 
 function mergeWorkspace(
   workspaces: Record<string, ProjectWorkspace>,
@@ -112,6 +113,28 @@ function persistLastActiveTabs(lastActiveTabs: Record<string, string>): void {
   );
 }
 
+function getStoredSelectedProjectId(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const value = window.localStorage.getItem(SELECTED_PROJECT_STORAGE_KEY);
+  return value && value.trim() ? value : null;
+}
+
+function persistSelectedProjectId(projectId: string | null): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (projectId) {
+    window.localStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, projectId);
+    return;
+  }
+
+  window.localStorage.removeItem(SELECTED_PROJECT_STORAGE_KEY);
+}
+
 function applyPreferredSelectedTab(
   workspace: ProjectWorkspace,
   lastActiveTabs: Record<string, string>,
@@ -152,16 +175,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const data = (await window.termbag.bootstrap()) as BootstrapData;
+      const storedSelectedProjectId = getStoredSelectedProjectId();
+      const selectedProjectId = data.projects.some(
+        (project) => project.id === storedSelectedProjectId,
+      )
+        ? storedSelectedProjectId
+        : data.selectedProjectId;
+      persistSelectedProjectId(selectedProjectId);
       set({
         bootstrapped: true,
         loading: false,
         projects: data.projects,
         shellProfiles: data.shellProfiles,
-        selectedProjectId: data.selectedProjectId,
+        selectedProjectId,
       });
 
-      if (data.selectedProjectId) {
-        await get().loadProjectWorkspace(data.selectedProjectId);
+      if (selectedProjectId) {
+        await get().loadProjectWorkspace(selectedProjectId);
       }
     } catch (error) {
       set({
@@ -189,6 +219,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   selectProject(projectId: string) {
+    persistSelectedProjectId(projectId);
     set({ selectedProjectId: projectId, historyError: null });
     if (!get().workspaces[projectId]) {
       void get().loadProjectWorkspace(projectId);
@@ -230,6 +261,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           [workspace.project.id]: workspace.selectedTabId,
         });
       }
+      persistSelectedProjectId(workspace.project.id);
       set((state) => ({
         loading: false,
         selectedProjectId: workspace.project.id,
@@ -268,11 +300,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       set((state) => {
         const nextWorkspaces = { ...state.workspaces };
         delete nextWorkspaces[projectId];
+        const nextSelectedProjectId = bootstrapData.selectedProjectId;
+        persistSelectedProjectId(nextSelectedProjectId);
         return {
           loading: false,
           projects: bootstrapData.projects,
           shellProfiles: bootstrapData.shellProfiles,
-          selectedProjectId: bootstrapData.selectedProjectId,
+          selectedProjectId: nextSelectedProjectId,
           workspaces: nextWorkspaces,
         };
       });
