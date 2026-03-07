@@ -18,6 +18,19 @@ type ThemeMode = "dark" | "light";
 
 const THEME_STORAGE_KEY = "termbag-theme-mode";
 
+function getShellLabel(shellProfileId: string): string {
+  switch (shellProfileId) {
+    case "pwsh":
+      return "PowerShell 7";
+    case "powershell":
+      return "Windows PowerShell";
+    case "cmd":
+      return "Command Prompt";
+    default:
+      return shellProfileId;
+  }
+}
+
 export function App() {
   const hasPreloadApi =
     typeof window !== "undefined" && typeof window.termbag !== "undefined";
@@ -233,28 +246,38 @@ export function App() {
                     </span>
                   ) : (
                     <>
-                      <span className="project-card__name">{project.name}</span>
-                      <span className="project-card__path">
-                        {project.rootPath
-                          ? `Default path: ${project.rootPath}`
-                          : "No default path"}
-                      </span>
-                      <span className="project-card__meta">
-                        {shellProfiles.find((profile) => profile.id === project.shellProfileId)
-                          ?.label ?? project.shellProfileId}
+                      <span className="project-card__top">
+                        <span
+                          className="project-card__shell"
+                          title={
+                            shellProfiles.find((profile) => profile.id === project.shellProfileId)
+                              ?.label ?? project.shellProfileId
+                          }
+                        >
+                          <ShellIcon shellProfileId={project.shellProfileId} />
+                        </span>
+                        <span className="project-card__name" title={project.name}>
+                          {project.name}
+                        </span>
                       </span>
                       <span className="project-card__actions">
-                        <span
-                          className="link-button"
+                        <button
+                          type="button"
+                          className="icon-button project-card__action-button"
+                          title="Edit project"
+                          aria-label="Edit project"
                           onClick={(event) => {
                             event.stopPropagation();
                             setModalState({ mode: "edit", project });
                           }}
                         >
-                          Edit
-                        </span>
-                        <span
-                          className="link-button danger"
+                          <EditIcon />
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-button project-card__action-button danger"
+                          title="Delete project"
+                          aria-label="Delete project"
                           onClick={(event) => {
                             event.stopPropagation();
                             if (window.confirm(`Delete project "${project.name}"?`)) {
@@ -262,8 +285,8 @@ export function App() {
                             }
                           }}
                         >
-                          Delete
-                        </span>
+                          <DeleteIcon />
+                        </button>
                       </span>
                     </>
                   )}
@@ -278,8 +301,10 @@ export function App() {
               className="ghost-button sidebar__settings-button"
               onClick={() => setSettingsOpen(true)}
               title="Settings"
+              aria-label="Settings"
             >
-              {sidebarCollapsed ? "S" : "Settings"}
+              <SettingsIcon />
+              {!sidebarCollapsed ? <span>Settings</span> : null}
             </button>
           </div>
         </aside>
@@ -397,6 +422,95 @@ export function App() {
         />
       ) : null}
     </>
+  );
+}
+
+function ShellIcon({ shellProfileId }: { shellProfileId: string }) {
+  const title = getShellLabel(shellProfileId);
+
+  if (shellProfileId === "cmd") {
+    return (
+      <svg viewBox="0 0 16 16" className="ui-icon" aria-hidden="true">
+        <title>{title}</title>
+        <path d="M2 3h12v10H2z" fill="none" stroke="currentColor" strokeWidth="1.4" />
+        <path
+          d="M4 6l2 2-2 2M7.5 10H11"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="square"
+        />
+      </svg>
+    );
+  }
+
+  if (shellProfileId === "powershell") {
+    return (
+      <svg viewBox="0 0 16 16" className="ui-icon" aria-hidden="true">
+        <title>{title}</title>
+        <path d="M3.5 4.5l5 3.5-5 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M8.5 11h4" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      </svg>
+    );
+  }
+
+  if (shellProfileId === "pwsh") {
+    return (
+      <svg viewBox="0 0 16 16" className="ui-icon" aria-hidden="true">
+        <title>{title}</title>
+        <path d="M3.5 4.5l4 2.8-4 2.8" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M8 5l-1 3h2l-1 3 3-4H9.2L10 5z" fill="currentColor" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 16 16" className="ui-icon" aria-hidden="true">
+      <title>{title}</title>
+      <circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="ui-icon" aria-hidden="true">
+      <path
+        d="M3 11.8L3.4 9l5.9-5.9 2.6 2.6L6 11.6 3 11.8z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+      />
+      <path d="M8.8 3.6l2.6 2.6" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
+function DeleteIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="ui-icon" aria-hidden="true">
+      <path
+        d="M4 5h8M6 5V3.8h4V5M5 5l.5 7h5L11 5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+      />
+      <path d="M7 6.8v4M9 6.8v4" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
+function SettingsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="ui-icon" aria-hidden="true">
+      <path
+        d="M8 2.3l1 .3.4 1.3 1.3.5 1.1-.7.8.8-.7 1.1.5 1.3 1.3.4.3 1-.3 1-1.3.4-.5 1.3.7 1.1-.8.8-1.1-.7-1.3.5-.4 1.3-1 .3-1-.3-.4-1.3-1.3-.5-1.1.7-.8-.8.7-1.1-.5-1.3-1.3-.4-.3-1 .3-1 1.3-.4.5-1.3-.7-1.1.8-.8 1.1.7 1.3-.5.4-1.3 1-.3z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1"
+      />
+      <circle cx="8" cy="8" r="2.1" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
   );
 }
 

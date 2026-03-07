@@ -96,6 +96,10 @@ kbd {
   background: var(--bg-panel);
 }
 
+.sidebar--collapsed {
+  padding: 12px 8px;
+}
+
 .sidebar__top,
 .history-header,
 .modal__actions,
@@ -123,6 +127,11 @@ kbd {
   overflow: auto;
 }
 
+.sidebar--collapsed .project-list {
+  align-items: center;
+  overflow-x: hidden;
+}
+
 .project-card,
 .sidebar-empty-card,
 .terminal-pane,
@@ -138,10 +147,11 @@ kbd {
 }
 
 .project-card {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px;
+  gap: 0;
+  padding: 10px 12px;
   color: inherit;
   text-align: left;
   transition: border-color 150ms ease, background 150ms ease;
@@ -162,25 +172,35 @@ kbd {
 }
 
 .project-card--collapsed {
-  align-items: center;
-  justify-content: center;
-  min-height: 58px;
-  padding: 10px;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  min-width: 48px;
+  height: 48px;
+  min-height: 48px;
+  max-width: 48px;
+  max-height: 48px;
+  padding: 0;
+  overflow: hidden;
 }
 
 .project-card__name {
+  min-width: 0;
   font-weight: 700;
   color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-card__mono {
-  font-size: 22px;
+  display: block;
+  font-size: 18px;
+  line-height: 1;
   font-weight: 700;
   color: var(--text-strong);
 }
 
-.project-card__path,
-.project-card__meta,
 .project-card__actions,
 .history-entry span,
 .restored-pane__label,
@@ -195,16 +215,59 @@ kbd {
 .project-card__actions,
 .tab-chip,
 .history-entry,
-.link-button,
 .tab-chip__close {
   cursor: pointer;
 }
 
-.link-button {
-  color: var(--text-strong);
+.project-card__top {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding-right: 56px;
 }
 
-.link-button.danger {
+.project-card__shell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+}
+
+.project-card__actions {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transform: translateY(-50%);
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.project-card:hover .project-card__actions,
+.project-card:focus-visible .project-card__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.project-card__action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  background: var(--bg);
+}
+
+.project-card__action-button.danger {
   color: var(--danger);
 }
 
@@ -223,6 +286,10 @@ kbd {
 
 .sidebar__settings-button {
   width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 .workspace {
@@ -511,6 +578,12 @@ html[data-theme="light"] .modal-backdrop {
 .history-entry--same-tab {
   border-color: var(--accent-strong);
   background: var(--accent-soft);
+}
+
+.ui-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
 }
 
 .floating-error {
