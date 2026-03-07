@@ -40,6 +40,8 @@ interface AppState {
   setTabRuntime(projectId: string, runtime: TabRuntimeSummary): void;
 }
 
+const LAST_ACTIVE_TABS_STORAGE_KEY = "termbag-last-active-tabs";
+
 function mergeWorkspace(
   workspaces: Record<string, ProjectWorkspace>,
   workspace: ProjectWorkspace,
@@ -74,6 +76,55 @@ function applyRuntimeToWorkspaces(
         tab.id === runtime.tabId ? { ...tab, runtime } : tab,
       ),
     },
+  };
+}
+
+function getStoredLastActiveTabs(): Record<string, string> {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(LAST_ACTIVE_TABS_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistLastActiveTabs(lastActiveTabs: Record<string, string>): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(
+    LAST_ACTIVE_TABS_STORAGE_KEY,
+    JSON.stringify(lastActiveTabs),
+  );
+}
+
+function applyPreferredSelectedTab(
+  workspace: ProjectWorkspace,
+  lastActiveTabs: Record<string, string>,
+): ProjectWorkspace {
+  const preferredTabId = lastActiveTabs[workspace.project.id];
+  if (!preferredTabId) {
+    return workspace;
+  }
+
+  const matchingTab = workspace.tabs.find((tab) => tab.id === preferredTabId);
+  if (!matchingTab) {
+    return workspace;
+  }
+
+  return {
+    ...workspace,
+    selectedTabId: preferredTabId,
   };
 }
 
@@ -118,7 +169,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async loadProjectWorkspace(projectId: string) {
     try {
-      const workspace = await window.termbag.getProjectWorkspace(projectId);
+      const workspace = applyPreferredSelectedTab(
+        await window.termbag.getProjectWorkspace(projectId),
+        getStoredLastActiveTabs(),
+      );
       set((state) => ({
         workspaces: mergeWorkspace(state.workspaces, workspace),
         projects: upsertProject(state.projects, workspace.project),
@@ -138,6 +192,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setSelectedTab(projectId: string, tabId: string) {
+    const nextLastActiveTabs = {
+      ...getStoredLastActiveTabs(),
+      [projectId]: tabId,
+    };
+    persistLastActiveTabs(nextLastActiveTabs);
+
     set((state) => {
       const workspace = state.workspaces[projectId];
       if (!workspace) {
@@ -160,6 +220,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const workspace = await window.termbag.createProject(input);
+      if (workspace.selectedTabId) {
+        persistLastActiveTabs({
+          ...getStoredLastActiveTabs(),
+          [workspace.project.id]: workspace.selectedTabId,
+        });
+      }
       set((state) => ({
         loading: false,
         selectedProjectId: workspace.project.id,
@@ -221,7 +287,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   async createTab(input: CreateTabInput) {
     set({ loading: true, error: null });
     try {
-      const workspace = await window.termbag.createTab(input);
+      const workspace = applyPreferredSelectedTab(
+        await window.termbag.createTab(input),
+        getStoredLastActiveTabs(),
+      );
       set((state) => ({
         loading: false,
         workspaces: mergeWorkspace(state.workspaces, workspace),
@@ -238,7 +307,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   async renameTab(input: RenameTabInput) {
     set({ loading: true, error: null });
     try {
-      const workspace = await window.termbag.renameTab(input);
+      const workspace = applyPreferredSelectedTab(
+        await window.termbag.renameTab(input),
+        getStoredLastActiveTabs(),
+      );
       set((state) => ({
         loading: false,
         workspaces: mergeWorkspace(state.workspaces, workspace),
@@ -255,7 +327,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   async closeTab(tabId: string) {
     set({ loading: true, error: null });
     try {
-      const workspace = await window.termbag.closeTab(tabId);
+      const workspace = applyPreferredSelectedTab(
+        await window.termbag.closeTab(tabId),
+        getStoredLastActiveTabs(),
+      );
       set((state) => ({
         loading: false,
         workspaces: mergeWorkspace(state.workspaces, workspace),

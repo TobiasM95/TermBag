@@ -162,12 +162,12 @@ export function App() {
   useEffect(() => {
     if (
       selectedWorkspace &&
-      !selectedWorkspace.selectedTabId &&
+      !activeTab &&
       selectedWorkspace.tabs.length > 0
     ) {
       setSelectedTab(selectedWorkspace.project.id, selectedWorkspace.tabs[0]!.id);
     }
-  }, [selectedWorkspace, setSelectedTab]);
+  }, [activeTab, selectedWorkspace, setSelectedTab]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

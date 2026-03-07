@@ -104,6 +104,7 @@ export function TerminalPane({ project, tab, themeMode }: TerminalPaneProps) {
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(hostRef.current);
+    terminal.focus();
 
     const fitTerminal = (): TerminalSize => {
       fitAddon.fit();
@@ -211,6 +212,7 @@ export function TerminalPane({ project, tab, themeMode }: TerminalPaneProps) {
       const settledSize = fitTerminal();
       sendResizeIfNeeded(settledSize);
       terminal.scrollToBottom();
+      terminal.focus();
 
       return () => {
         resizeObserver.disconnect();
