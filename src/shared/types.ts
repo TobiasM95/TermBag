@@ -1,3 +1,5 @@
+import type { SnapshotFormat } from "./snapshot.js";
+
 export type HistorySource = "integration" | "input_capture" | "heuristic";
 
 export interface Project {
@@ -39,8 +41,8 @@ export interface SavedTerminalTab {
 
 export interface TerminalSnapshot {
   tabId: string;
-  serializedBuffer: string;
-  lineCount: number;
+  snapshotFormat: SnapshotFormat;
+  transcriptText: string;
   byteCount: number;
   updatedAt: string;
 }
@@ -79,7 +81,6 @@ export interface TabRuntimeSummary {
 }
 
 export interface WorkspaceTab extends SavedTerminalTab {
-  snapshot: TerminalSnapshot | null;
   runtime: TabRuntimeSummary | null;
   rootPathMissing: boolean;
 }
@@ -138,7 +139,8 @@ export interface RecallHistoryInput {
 export interface HydratedTabSession {
   tabId: string;
   runtime: TabRuntimeSummary;
-  liveOutput: string;
+  serializedState: string;
+  replayRevision: number;
 }
 
 export type TerminalEvent =
@@ -146,6 +148,7 @@ export type TerminalEvent =
       type: "output";
       tabId: string;
       data: string;
+      sequence: number;
     }
   | {
       type: "status";

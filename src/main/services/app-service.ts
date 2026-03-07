@@ -46,15 +46,8 @@ export class AppService {
     const project = this.requireProject(projectId);
     const rootPathMissing = this.isConfiguredProjectRootMissing(project);
     const tabs = this.database.listTabsForProject(projectId);
-    const snapshots = new Map(
-      this.database
-        .listSnapshotsForProject(projectId)
-        .map((snapshot) => [snapshot.tabId, snapshot]),
-    );
-
     const workspaceTabs: WorkspaceTab[] = tabs.map((tab) => ({
       ...tab,
-      snapshot: snapshots.get(tab.id) ?? null,
       runtime: this.ptyManager.getRuntimeSummary(tab.id),
       rootPathMissing,
     }));
@@ -164,7 +157,8 @@ export class AppService {
     return {
       tabId: input.tabId,
       runtime: activated.runtime,
-      liveOutput: activated.liveOutput,
+      serializedState: activated.serializedState,
+      replayRevision: activated.replayRevision,
     };
   }
 
@@ -185,7 +179,8 @@ export class AppService {
     return {
       tabId: tab.id,
       runtime: restarted.runtime,
-      liveOutput: restarted.liveOutput,
+      serializedState: restarted.serializedState,
+      replayRevision: restarted.replayRevision,
     };
   }
 
@@ -200,6 +195,11 @@ export class AppService {
 
   shutdown(): void {
     this.ptyManager.shutdown();
+    this.database.close();
+  }
+
+  async prepareForQuit(): Promise<void> {
+    await this.ptyManager.persistSnapshots();
     this.database.close();
   }
 

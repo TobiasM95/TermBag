@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { SNAPSHOT_FORMAT } from "../../shared/snapshot.js";
 import type {
   HistoryEntry,
   HistorySource,
@@ -28,8 +29,8 @@ interface CreateTabParams {
 
 interface SnapshotParams {
   tabId: string;
-  serializedBuffer: string;
-  lineCount: number;
+  snapshotFormat: string;
+  transcriptText: string;
   byteCount: number;
 }
 
@@ -80,8 +81,8 @@ const MIGRATIONS = [
 
       CREATE TABLE IF NOT EXISTS terminal_snapshots (
         tab_id TEXT PRIMARY KEY,
-        serialized_buffer TEXT NOT NULL,
-        line_count INTEGER NOT NULL,
+        snapshot_format TEXT NOT NULL,
+        transcript_text TEXT NOT NULL,
         byte_count INTEGER NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY(tab_id) REFERENCES saved_terminal_tabs(id) ON DELETE CASCADE
@@ -159,8 +160,8 @@ function mapTab(row: Record<string, unknown>): SavedTerminalTab {
 function mapSnapshot(row: Record<string, unknown>): TerminalSnapshot {
   return {
     tabId: String(row.tab_id),
-    serializedBuffer: String(row.serialized_buffer),
-    lineCount: Number(row.line_count),
+    snapshotFormat: String(row.snapshot_format) as TerminalSnapshot["snapshotFormat"],
+    transcriptText: String(row.transcript_text),
     byteCount: Number(row.byte_count),
     updatedAt: String(row.updated_at),
   };
@@ -251,6 +252,129 @@ export class DatabaseService {
         this.db
           .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
           .run("003_tab_custom_title", nowIso());
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
+
+    if (!existing.has("004_serialized_terminal_snapshots")) {
+      this.db.exec("BEGIN");
+      try {
+        const snapshotColumns = new Set(this.getTableColumns("terminal_snapshots"));
+        if (
+          snapshotColumns.has("serialized_buffer") &&
+          !snapshotColumns.has("transcript_text")
+        ) {
+          this.db.exec(
+            "ALTER TABLE terminal_snapshots RENAME COLUMN serialized_buffer TO transcript_text",
+          );
+        }
+        if (!snapshotColumns.has("snapshot_format")) {
+          this.db.exec(
+            `ALTER TABLE terminal_snapshots
+             ADD COLUMN snapshot_format TEXT NOT NULL DEFAULT '${SNAPSHOT_FORMAT}'`,
+          );
+        }
+
+        this.db.exec("DELETE FROM terminal_snapshots");
+        this.db
+          .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
+          .run("004_serialized_terminal_snapshots", nowIso());
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
+
+    if (!existing.has("005_snapshot_table_cleanup")) {
+      this.db.exec("BEGIN");
+      try {
+        const snapshotColumns = new Set(this.getTableColumns("terminal_snapshots"));
+        if (snapshotColumns.has("line_count")) {
+          this.db.exec(`
+            CREATE TABLE terminal_snapshots_next (
+              tab_id TEXT PRIMARY KEY,
+              snapshot_format TEXT NOT NULL,
+              transcript_text TEXT NOT NULL,
+              byte_count INTEGER NOT NULL,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY(tab_id) REFERENCES saved_terminal_tabs(id) ON DELETE CASCADE
+            );
+          `);
+          this.db.exec(`
+            INSERT INTO terminal_snapshots_next (
+              tab_id, snapshot_format, transcript_text, byte_count, updated_at
+            )
+            SELECT
+              tab_id,
+              COALESCE(snapshot_format, '${SNAPSHOT_FORMAT}'),
+              '',
+              byte_count,
+              updated_at
+            FROM terminal_snapshots;
+          `);
+          this.db.exec("DROP TABLE terminal_snapshots");
+          this.db.exec("ALTER TABLE terminal_snapshots_next RENAME TO terminal_snapshots");
+        }
+
+        this.db
+          .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
+          .run("005_snapshot_table_cleanup", nowIso());
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
+
+    if (!existing.has("006_snapshot_dimensions")) {
+      this.db.exec("BEGIN");
+      try {
+        this.db
+          .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
+          .run("006_snapshot_dimensions", nowIso());
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
+
+    if (!existing.has("007_reset_corrupted_snapshots")) {
+      this.db.exec("BEGIN");
+      try {
+        this.db.exec("DELETE FROM terminal_snapshots");
+        this.db
+          .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
+          .run("007_reset_corrupted_snapshots", nowIso());
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
+
+    if (!existing.has("008_transcript_snapshots")) {
+      this.db.exec("BEGIN");
+      try {
+        this.db.exec(`
+          CREATE TABLE terminal_snapshots_next (
+            tab_id TEXT PRIMARY KEY,
+            snapshot_format TEXT NOT NULL,
+            transcript_text TEXT NOT NULL,
+            byte_count INTEGER NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(tab_id) REFERENCES saved_terminal_tabs(id) ON DELETE CASCADE
+          );
+        `);
+        this.db.exec("DROP TABLE terminal_snapshots");
+        this.db.exec("ALTER TABLE terminal_snapshots_next RENAME TO terminal_snapshots");
+        this.db
+          .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
+          .run("008_transcript_snapshots", nowIso());
         this.db.exec("COMMIT");
       } catch (error) {
         this.db.exec("ROLLBACK");
@@ -497,7 +621,7 @@ export class DatabaseService {
   getSnapshot(tabId: string): TerminalSnapshot | null {
     const row = this.db
       .prepare(
-        `SELECT tab_id, serialized_buffer, line_count, byte_count, updated_at
+        `SELECT tab_id, snapshot_format, transcript_text, byte_count, updated_at
          FROM terminal_snapshots
          WHERE tab_id = ?`,
       )
@@ -510,18 +634,18 @@ export class DatabaseService {
     this.db
       .prepare(
         `INSERT INTO terminal_snapshots (
-          tab_id, serialized_buffer, line_count, byte_count, updated_at
+          tab_id, snapshot_format, transcript_text, byte_count, updated_at
         ) VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(tab_id) DO UPDATE SET
-          serialized_buffer = excluded.serialized_buffer,
-          line_count = excluded.line_count,
+          snapshot_format = excluded.snapshot_format,
+          transcript_text = excluded.transcript_text,
           byte_count = excluded.byte_count,
           updated_at = excluded.updated_at`,
       )
       .run(
         params.tabId,
-        params.serializedBuffer,
-        params.lineCount,
+        params.snapshotFormat,
+        params.transcriptText,
         params.byteCount,
         timestamp,
       );
@@ -531,7 +655,7 @@ export class DatabaseService {
   listSnapshotsForProject(projectId: string): TerminalSnapshot[] {
     const rows = this.db
       .prepare(
-        `SELECT s.tab_id, s.serialized_buffer, s.line_count, s.byte_count, s.updated_at
+        `SELECT s.tab_id, s.snapshot_format, s.transcript_text, s.byte_count, s.updated_at
          FROM terminal_snapshots s
          INNER JOIN saved_terminal_tabs t ON t.id = s.tab_id
          WHERE t.project_id = ?`,

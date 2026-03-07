@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "xterm";
+import { Terminal } from "@xterm/xterm";
 import type { Project, WorkspaceTab } from "../../shared/types";
-import { sanitizeSnapshotForDisplay } from "../../shared/snapshot";
+import { isSameTerminalSize, type TerminalSize } from "../../shared/terminal-size";
 import { useAppStore } from "../store/app-store";
 
 interface TerminalPaneProps {
@@ -11,9 +11,34 @@ interface TerminalPaneProps {
   themeMode: "dark" | "light";
 }
 
+type PendingOutput = {
+  data: string;
+  sequence: number;
+};
+
+function writeTerminalData(terminal: Terminal, data: string): Promise<void> {
+  if (!data) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    terminal.write(data, resolve);
+  });
+}
+
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
 export function TerminalPane({ project, tab, themeMode }: TerminalPaneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const restartRequestedRef = useRef(false);
+  const hydrationCompleteRef = useRef(false);
+  const pendingOutputRef = useRef<PendingOutput[]>([]);
+  const latestAppliedSequenceRef = useRef(0);
+  const lastSentSizeRef = useRef<TerminalSize | null>(null);
   const setTabRuntime = useAppStore((state) => state.setTabRuntime);
   const [sessionRevision, setSessionRevision] = useState(0);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -69,31 +94,60 @@ export function TerminalPane({ project, tab, themeMode }: TerminalPaneProps) {
           };
 
     const terminal = new Terminal({
-      convertEol: true,
+      convertEol: false,
       cursorBlink: true,
       fontFamily: "'Cascadia Code', Consolas, monospace",
       fontSize: 13,
+      scrollback: 3000,
       theme: terminalTheme,
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(hostRef.current);
-    fitAddon.fit();
 
-    const resize = () => {
+    const fitTerminal = (): TerminalSize => {
       fitAddon.fit();
-      void window.termbag.resizeTab({
-        tabId: tab.id,
+      return {
         cols: terminal.cols,
         rows: terminal.rows,
+      };
+    };
+
+    const sendResizeIfNeeded = (size: TerminalSize) => {
+      if (lastSentSizeRef.current && isSameTerminalSize(lastSentSizeRef.current, size)) {
+        return;
+      }
+
+      lastSentSizeRef.current = size;
+      void window.termbag.resizeTab({
+        tabId: tab.id,
+        cols: size.cols,
+        rows: size.rows,
       });
     };
 
-    const resizeObserver = new ResizeObserver(() => resize());
-    resizeObserver.observe(hostRef.current);
+    const initialSize = fitTerminal();
+
+    hydrationCompleteRef.current = false;
+    pendingOutputRef.current = [];
+    latestAppliedSequenceRef.current = 0;
+    lastSentSizeRef.current = null;
 
     const disposeOutput = window.termbag.onTerminalEvent((event) => {
       if (event.type === "output" && event.tabId === tab.id) {
+        if (!hydrationCompleteRef.current) {
+          pendingOutputRef.current.push({
+            data: event.data,
+            sequence: event.sequence,
+          });
+          return;
+        }
+
+        if (event.sequence <= latestAppliedSequenceRef.current) {
+          return;
+        }
+
+        latestAppliedSequenceRef.current = event.sequence;
         terminal.write(event.data);
       }
     });
@@ -112,29 +166,68 @@ export function TerminalPane({ project, tab, themeMode }: TerminalPaneProps) {
       const response = shouldRestart
         ? await window.termbag.restartTab({
             tabId: tab.id,
-            cols: terminal.cols,
-            rows: terminal.rows,
+            cols: initialSize.cols,
+            rows: initialSize.rows,
           })
         : await window.termbag.activateTab({
             tabId: tab.id,
-            cols: terminal.cols,
-            rows: terminal.rows,
+            cols: initialSize.cols,
+            rows: initialSize.rows,
           });
 
       terminal.reset();
-      if (response.liveOutput) {
-        terminal.write(response.liveOutput);
+      if (response.serializedState) {
+        await writeTerminalData(terminal, response.serializedState);
       }
+
+      latestAppliedSequenceRef.current = response.replayRevision;
+      const bufferedOutput = pendingOutputRef.current
+        .filter((entry) => entry.sequence > response.replayRevision)
+        .sort((left, right) => left.sequence - right.sequence);
+      pendingOutputRef.current = [];
+
+      for (const entry of bufferedOutput) {
+        if (entry.sequence <= latestAppliedSequenceRef.current) {
+          continue;
+        }
+
+        await writeTerminalData(terminal, entry.data);
+        latestAppliedSequenceRef.current = entry.sequence;
+      }
+
+      hydrationCompleteRef.current = true;
+      lastSentSizeRef.current = initialSize;
       setTabRuntime(project.id, response.runtime);
-      resize();
+      const resizeObserver = new ResizeObserver(() => {
+        if (!hydrationCompleteRef.current) {
+          return;
+        }
+
+        const fittedSize = fitTerminal();
+        sendResizeIfNeeded(fittedSize);
+      });
+      resizeObserver.observe(hostRef.current);
+      await nextFrame();
+      const settledSize = fitTerminal();
+      sendResizeIfNeeded(settledSize);
+      terminal.scrollToBottom();
+
+      return () => {
+        resizeObserver.disconnect();
+      };
     };
 
-    void hydrate().catch((error: unknown) => {
-      setLocalError(error instanceof Error ? error.message : "Failed to start the shell.");
-    });
+    let disposeResizeObserver: (() => void) | null = null;
+    void hydrate()
+      .then((dispose) => {
+        disposeResizeObserver = dispose ?? null;
+      })
+      .catch((error: unknown) => {
+        setLocalError(error instanceof Error ? error.message : "Failed to start the shell.");
+      });
 
     return () => {
-      resizeObserver.disconnect();
+      disposeResizeObserver?.();
       disposeOutput();
       disposeInput.dispose();
       terminal.dispose();
@@ -142,26 +235,10 @@ export function TerminalPane({ project, tab, themeMode }: TerminalPaneProps) {
   }, [project.id, sessionRevision, setTabRuntime, tab.id, themeMode]);
 
   const runtime = tab.runtime;
-  const showSnapshot = Boolean(tab.snapshot?.serializedBuffer);
   const showRestart = runtime?.status === "exited" || runtime?.status === "error";
-  const restoredSnapshotText = tab.snapshot
-    ? sanitizeSnapshotForDisplay(tab.snapshot.serializedBuffer)
-    : "";
 
   return (
     <section className="terminal-pane">
-      {showSnapshot && restoredSnapshotText ? (
-        <>
-          <div className="restored-pane">
-            <div className="restored-pane__label">Restored snapshot</div>
-            <pre>{restoredSnapshotText}</pre>
-          </div>
-          <div className="restored-divider">
-            <span>Fresh shell output below</span>
-          </div>
-        </>
-      ) : null}
-
       {tab.rootPathMissing ? (
         <div className="terminal-state">
           <strong>Default path unavailable</strong>

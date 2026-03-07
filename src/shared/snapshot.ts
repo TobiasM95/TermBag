@@ -1,121 +1,117 @@
-const MAX_SNAPSHOT_LINES = 3000;
-const MAX_SNAPSHOT_BYTES = 1024 * 1024;
-const ENCODER = new TextEncoder();
-const OSC_SEQUENCE = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
-const CSI_SEQUENCE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
-const SINGLE_ESCAPE_SEQUENCE = /\u001b[@-Z\\-_]/g;
-const OTHER_CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001a\u001c-\u001f\u007f]/g;
+export const SNAPSHOT_FORMAT = "plain-transcript-v1" as const;
+export const SNAPSHOT_SCROLLBACK = 3000;
+export const SNAPSHOT_MAX_LOGICAL_LINES = 1200;
+export const SNAPSHOT_MAX_BYTES = 256 * 1024;
 
-export interface SnapshotAccumulatorState {
-  serializedBuffer: string;
-  lineCount: number;
-  byteCount: number;
+export type SnapshotFormat = typeof SNAPSHOT_FORMAT;
+
+export interface TranscriptBufferLineLike {
+  readonly isWrapped: boolean;
+  translateToString(trimRight?: boolean, startColumn?: number, endColumn?: number): string;
 }
 
-export const EMPTY_SNAPSHOT: SnapshotAccumulatorState = {
-  serializedBuffer: "",
-  lineCount: 0,
-  byteCount: 0,
-};
+export interface TranscriptBufferLike {
+  readonly length: number;
+  getLine(index: number): TranscriptBufferLineLike | undefined;
+}
 
-function trimToCaps(text: string): SnapshotAccumulatorState {
-  let lines = text.split(/\r?\n/);
-  if (lines.length > MAX_SNAPSHOT_LINES) {
-    lines = lines.slice(lines.length - MAX_SNAPSHOT_LINES);
+export function countSnapshotBytes(snapshotText: string): number {
+  return Buffer.byteLength(snapshotText, "utf8");
+}
+
+export function buildTerminalTranscript(
+  buffer: TranscriptBufferLike,
+  options?: {
+    maxLogicalLines?: number;
+    maxBytes?: number;
+  },
+): string {
+  const maxLogicalLines = options?.maxLogicalLines ?? SNAPSHOT_MAX_LOGICAL_LINES;
+  const maxBytes = options?.maxBytes ?? SNAPSHOT_MAX_BYTES;
+  const logicalLines: string[] = [];
+  let currentLine: string | null = null;
+
+  for (let lineIndex = 0; lineIndex < buffer.length; lineIndex += 1) {
+    const line = buffer.getLine(lineIndex);
+    if (!line) {
+      continue;
+    }
+
+    const rendered = line.translateToString(true);
+    if (line.isWrapped && currentLine !== null) {
+      currentLine += rendered;
+      continue;
+    }
+
+    if (currentLine !== null) {
+      logicalLines.push(currentLine);
+    }
+    currentLine = rendered;
   }
 
-  let joined = lines.join("\n");
-  let byteCount = ENCODER.encode(joined).length;
-
-  while (byteCount > MAX_SNAPSHOT_BYTES && lines.length > 0) {
-    lines = lines.slice(1);
-    joined = lines.join("\n");
-    byteCount = ENCODER.encode(joined).length;
+  if (currentLine !== null) {
+    logicalLines.push(currentLine);
   }
 
-  return {
-    serializedBuffer: joined,
-    lineCount: joined === "" ? 0 : lines.length,
-    byteCount,
-  };
-}
-
-export function appendSnapshotChunk(
-  current: SnapshotAccumulatorState,
-  chunk: string,
-): SnapshotAccumulatorState {
-  if (!chunk) {
-    return current;
+  while (logicalLines.length > 0 && logicalLines[0] === "") {
+    logicalLines.shift();
+  }
+  while (logicalLines.length > 0 && logicalLines[logicalLines.length - 1] === "") {
+    logicalLines.pop();
   }
 
-  const text = current.serializedBuffer
-    ? `${current.serializedBuffer}${chunk}`
-    : chunk;
-
-  return trimToCaps(text);
-}
-
-export function snapshotCaps() {
-  return {
-    maxLines: MAX_SNAPSHOT_LINES,
-    maxBytes: MAX_SNAPSHOT_BYTES,
-  };
-}
-
-export function sanitizeSnapshotForDisplay(serializedBuffer: string): string {
-  if (!serializedBuffer) {
+  if (logicalLines.length === 0) {
     return "";
   }
 
-  const withoutAnsi = serializedBuffer
-    .replace(OSC_SEQUENCE, "")
-    .replace(CSI_SEQUENCE, "")
-    .replace(SINGLE_ESCAPE_SEQUENCE, "")
-    .replace(OTHER_CONTROL_CHARS, "");
+  let boundedLines =
+    logicalLines.length > maxLogicalLines
+      ? logicalLines.slice(logicalLines.length - maxLogicalLines)
+      : logicalLines;
 
-  const normalizedLines: string[] = [];
-  let currentLine = "";
+  let transcript = ensureTranscriptEndsWithNewline(boundedLines.join("\r\n"));
+  while (boundedLines.length > 1 && countSnapshotBytes(transcript) > maxBytes) {
+    boundedLines = boundedLines.slice(1);
+    transcript = ensureTranscriptEndsWithNewline(boundedLines.join("\r\n"));
+  }
 
-  for (const char of withoutAnsi) {
-    if (char === "\r") {
-      currentLine = "";
-      continue;
+  if (countSnapshotBytes(transcript) <= maxBytes) {
+    return transcript;
+  }
+
+  const truncatedTail = truncateUtf8FromStart(
+    transcript,
+    Math.max(maxBytes - countSnapshotBytes("\r\n"), 0),
+  );
+  return ensureTranscriptEndsWithNewline(truncatedTail.trimStart());
+}
+
+export function ensureTranscriptEndsWithNewline(transcript: string): string {
+  if (!transcript) {
+    return "";
+  }
+
+  return /(?:\r\n|\n)$/.test(transcript) ? transcript : `${transcript}\r\n`;
+}
+
+function truncateUtf8FromStart(text: string, maxBytes: number): string {
+  if (maxBytes <= 0) {
+    return "";
+  }
+
+  const bytes = Buffer.from(text, "utf8");
+  if (bytes.byteLength <= maxBytes) {
+    return text;
+  }
+
+  let start = bytes.byteLength - maxBytes;
+  while (start < bytes.byteLength) {
+    const currentByte = bytes[start];
+    if (currentByte === undefined || (currentByte & 0b1100_0000) !== 0b1000_0000) {
+      break;
     }
-
-    if (char === "\n") {
-      normalizedLines.push(currentLine);
-      currentLine = "";
-      continue;
-    }
-
-    currentLine += char;
+    start += 1;
   }
 
-  normalizedLines.push(currentLine);
-
-  while (normalizedLines.length > 0 && normalizedLines[0]?.trim() === "") {
-    normalizedLines.shift();
-  }
-
-  while (
-    normalizedLines.length > 0 &&
-    normalizedLines[normalizedLines.length - 1]?.trim() === ""
-  ) {
-    normalizedLines.pop();
-  }
-
-  const compactedLines: string[] = [];
-  let previousWasBlank = false;
-
-  for (const line of normalizedLines) {
-    const isBlank = line.trim() === "";
-    if (isBlank && previousWasBlank) {
-      continue;
-    }
-
-    compactedLines.push(line);
-    previousWasBlank = isBlank;
-  }
-
-  return compactedLines.join("\n");
+  return bytes.subarray(start).toString("utf8");
 }

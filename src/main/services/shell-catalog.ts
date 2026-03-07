@@ -32,18 +32,20 @@ export class ShellCatalog {
     return "cmd";
   }
 
-  resolveLaunch(profile: ShellProfile): ResolvedShellLaunch {
+  resolveLaunch(profile: ShellProfile, bootstrapScriptPath?: string): ResolvedShellLaunch {
     if (profile.id === "cmd") {
       return {
         executable: profile.executable,
-        args: ["/k"],
+        args: bootstrapScriptPath ? ["/Q", "/K", bootstrapScriptPath] : ["/Q", "/K"],
         supportsIntegration: false,
       };
     }
 
     return {
       executable: profile.executable,
-      args: ["-NoExit", "-Command", buildPowerShellBootstrapScript()],
+      args: bootstrapScriptPath
+        ? ["-NoExit", "-ExecutionPolicy", "Bypass", "-File", bootstrapScriptPath]
+        : ["-NoExit", "-Command", buildPowerShellBootstrapScript()],
       supportsIntegration: true,
     };
   }

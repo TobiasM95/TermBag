@@ -1,37 +1,117 @@
+import headlessPkg from "@xterm/headless";
+import serializePkg from "@xterm/addon-serialize";
 import { describe, expect, it } from "vitest";
 import {
-  appendSnapshotChunk,
-  EMPTY_SNAPSHOT,
+  buildTerminalTranscript,
+  countSnapshotBytes,
   inferCmdCwdFromSubmittedCommand,
   inferCmdPromptCwdFromOutput,
+  isSameTerminalSize,
   markPromptReady,
   parseIntegrationChunk,
-  sanitizeSnapshotForDisplay,
+  stripInitialTerminalNoise,
 } from "./testable.js";
+import {
+  buildCmdBootstrapScript,
+  buildPowerShellBootstrapFile,
+} from "../main/services/shell-bootstrap.js";
 
-describe("snapshot retention", () => {
-  it("keeps only the newest 3000 lines", () => {
-    let state = EMPTY_SNAPSHOT;
-    const input = Array.from({ length: 3205 }, (_, index) => `line-${index}`).join("\n");
-    state = appendSnapshotChunk(state, input);
+const { Terminal: HeadlessTerminal } = headlessPkg;
+const { SerializeAddon } = serializePkg;
 
-    expect(state.lineCount).toBe(3000);
-    expect(state.serializedBuffer.startsWith("line-205")).toBe(true);
-    expect(state.serializedBuffer.endsWith("line-3204")).toBe(true);
+function writeTerminalData(
+  terminal: { write(data: string, callback?: () => void): void },
+  data: string,
+): Promise<void> {
+  return new Promise((resolve) => {
+    terminal.write(data, resolve);
+  });
+}
+
+describe("snapshot metadata", () => {
+  it("counts serialized state bytes as utf8", () => {
+    expect(countSnapshotBytes("abc")).toBe(3);
+    expect(countSnapshotBytes("\u00e4")).toBe(2);
   });
 
-  it("sanitizes ANSI-rich terminal output for restored preview rendering", () => {
-    const text = sanitizeSnapshotForDisplay(
-      "\u001b[?9001h\u001b[?1004h\u001b[2J\u001b[m\u001b[HC:\\Users\\tobim\\Documents>\rC:\\Users\\tobim\\Documents>\u001b[K",
+  it("extracts a transcript without viewport filler lines", async () => {
+    const terminal = new HeadlessTerminal({
+      allowProposedApi: true,
+      cols: 80,
+      rows: 24,
+      scrollback: 3000,
+      convertEol: false,
+    });
+
+    await writeTerminalData(
+      terminal,
+      "C:\\Users\\tobim\\Documents>dir\r\nline-1\r\nline-2\r\nC:\\Users\\tobim\\Documents>",
     );
 
-    expect(text).toBe("C:\\Users\\tobim\\Documents>");
+    expect(buildTerminalTranscript(terminal.buffer.normal)).toBe(
+      "C:\\Users\\tobim\\Documents>dir\r\nline-1\r\nline-2\r\nC:\\Users\\tobim\\Documents>\r\n",
+    );
   });
 
-  it("compacts long runs of blank lines in restored preview rendering", () => {
-    const text = sanitizeSnapshotForDisplay("line-1\n\n\n\nline-2\n\n\nline-3");
+  it("merges wrapped lines into one logical transcript line", async () => {
+    const terminal = new HeadlessTerminal({
+      allowProposedApi: true,
+      cols: 5,
+      rows: 4,
+      scrollback: 100,
+      convertEol: false,
+    });
 
-    expect(text).toBe("line-1\n\nline-2\n\nline-3");
+    await writeTerminalData(terminal, "abcdef\r\nprompt>");
+
+    expect(buildTerminalTranscript(terminal.buffer.normal)).toBe("abcdef\r\nprompt>\r\n");
+  });
+});
+
+describe("terminal sizing", () => {
+  it("detects when a resize is a no-op", () => {
+    expect(isSameTerminalSize({ cols: 80, rows: 24 }, { cols: 80, rows: 24 })).toBe(true);
+    expect(isSameTerminalSize({ cols: 80, rows: 24 }, { cols: 120, rows: 24 })).toBe(
+      false,
+    );
+  });
+
+  it("keeps serialized output stable across no-op resize decisions", async () => {
+    const terminal = new HeadlessTerminal({
+      allowProposedApi: true,
+      cols: 80,
+      rows: 24,
+      scrollback: 3000,
+      convertEol: false,
+    });
+    const serializer = new SerializeAddon();
+    terminal.loadAddon(serializer);
+
+    await writeTerminalData(
+      terminal,
+      "C:\\Users\\tobim\\Documents>dir\r\nline-1\r\nline-2\r\nC:\\Users\\tobim\\Documents>",
+    );
+
+    const before = serializer.serialize({
+      excludeAltBuffer: true,
+      scrollback: 3000,
+    });
+
+    if (
+      !isSameTerminalSize(
+        { cols: terminal.cols, rows: terminal.rows },
+        { cols: 80, rows: 24 },
+      )
+    ) {
+      terminal.resize(80, 24);
+    }
+
+    const after = serializer.serialize({
+      excludeAltBuffer: true,
+      scrollback: 3000,
+    });
+
+    expect(after).toBe(before);
   });
 });
 
@@ -44,6 +124,44 @@ describe("PowerShell integration parsing", () => {
     expect(parsed.cwdSignals).toEqual(["C:\\Work\\Repo"]);
     expect(parsed.promptSignals).toEqual(["ready"]);
     expect(parsed.sanitized).toBe("PS C:\\Work\\Repo> ");
+  });
+
+  it("preserves generic ANSI sequences for terminal replay", () => {
+    const parsed = parseIntegrationChunk("\u001b[31mred\u001b[0m");
+
+    expect(parsed.sanitized).toBe("\u001b[31mred\u001b[0m");
+  });
+
+  it("recognizes alternate-screen enter and exit variants used by TUIs", () => {
+    const entered = parseIntegrationChunk("\u001b[?1047h\u001b[?25l");
+    const exited = parseIntegrationChunk("\u001b[?47l");
+
+    expect(entered.enteredAlternateScreen).toBe(true);
+    expect(exited.exitedAlternateScreen).toBe(true);
+  });
+
+  it("strips cmd startup noise that would wipe hydrated replay output", () => {
+    expect(
+      stripInitialTerminalNoise(
+        "\u001b[?9001h\u001b[?1004h\u001b[?25l\u001b[2J\u001b[m\u001b[HC:\\Users\\tobim\\Documents>",
+      ),
+    ).toBe("C:\\Users\\tobim\\Documents>");
+  });
+});
+
+describe("shell bootstrap scripts", () => {
+  it("builds a cmd bootstrap script that types the transcript file", () => {
+    expect(buildCmdBootstrapScript("C:\\Temp\\history.txt")).toContain(
+      'type "C:\\Temp\\history.txt"',
+    );
+  });
+
+  it("builds a PowerShell bootstrap file that prints transcript text and installs prompt integration", () => {
+    const script = buildPowerShellBootstrapFile("C:\\Temp\\bob's-history.txt");
+
+    expect(script).toContain("$TranscriptPath = 'C:\\Temp\\bob''s-history.txt'");
+    expect(script).toContain("[Console]::Write($text)");
+    expect(script).toContain("function global:prompt {");
   });
 });
 

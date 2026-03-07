@@ -10,10 +10,11 @@ export interface ParsedIntegrationChunk {
 
 const OSC_CWD_REGEX = /\u001b]633;TermBagCwd=([^\u0007]*)\u0007/g;
 const OSC_PROMPT_REGEX = /\u001b]633;TermBagPrompt=([^\u0007]*)\u0007/g;
-const ALT_SCREEN_ENTER = /\u001b\[\?1049h/g;
-const ALT_SCREEN_EXIT = /\u001b\[\?1049l/g;
+const ALT_SCREEN_ENTER = /\u001b\[\?(?:1049|1047|47)h/g;
+const ALT_SCREEN_EXIT = /\u001b\[\?(?:1049|1047|47)l/g;
+const INITIAL_TERMINAL_NOISE = /\u001b\[\?9001h|\u001b\[\?1004h|\u001b\[\?25[hl]|\u001b\[2J|\u001b\[H|\u001b\[K|\u001b\[(?:0|)m/g;
 
-export function buildPowerShellBootstrapScript(): string {
+export function getPowerShellBootstrapLines(): string[] {
   return [
     "$script:__TermBagOriginalPrompt = (Get-Command prompt).ScriptBlock",
     "function global:prompt {",
@@ -24,7 +25,11 @@ export function buildPowerShellBootstrapScript(): string {
     "  Write-Host ($esc + ']633;TermBagPrompt=ready' + $bel) -NoNewline",
     "  & $script:__TermBagOriginalPrompt",
     "}",
-  ].join("; ");
+  ];
+}
+
+export function buildPowerShellBootstrapScript(): string {
+  return getPowerShellBootstrapLines().join("; ");
 }
 
 export function parseIntegrationChunk(chunk: string): ParsedIntegrationChunk {
@@ -52,6 +57,10 @@ export function parseIntegrationChunk(chunk: string): ParsedIntegrationChunk {
     enteredAlternateScreen,
     exitedAlternateScreen,
   };
+}
+
+export function stripInitialTerminalNoise(chunk: string): string {
+  return chunk.replace(INITIAL_TERMINAL_NOISE, "");
 }
 
 export function inferCmdPromptCwdFromOutput(

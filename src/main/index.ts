@@ -29,6 +29,7 @@ interface AppServiceContract {
   restartTab(input: ActivateTabInput): unknown;
   listHistory(projectId: string, limit?: number): unknown;
   recallHistory(tabId: string, commandText: string): unknown;
+  prepareForQuit(): Promise<void>;
   shutdown(): void;
 }
 
@@ -36,6 +37,7 @@ let mainWindow: BrowserWindow | null = null;
 let appService: AppServiceContract | null = null;
 let startupComplete = false;
 let fatalErrorShown = false;
+let quitting = false;
 const CURRENT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(CURRENT_DIR, "../..");
 
@@ -208,6 +210,21 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("before-quit", () => {
-  appService?.shutdown();
+app.on("before-quit", (event) => {
+  if (quitting) {
+    return;
+  }
+
+  event.preventDefault();
+  quitting = true;
+  const prepare = appService
+    ? appService.prepareForQuit()
+    : Promise.resolve();
+  void prepare
+    .catch((error) => {
+      console.error(error);
+    })
+    .finally(() => {
+      app.exit(0);
+    });
 });

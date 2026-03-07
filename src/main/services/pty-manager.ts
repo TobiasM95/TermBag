@@ -1,17 +1,24 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
+import xtermHeadlessPackage from "@xterm/headless";
+import xtermSerializePackage from "@xterm/addon-serialize";
 import { spawn, type IPty } from "node-pty";
 import {
-  appendSnapshotChunk,
+  buildTerminalTranscript,
+  countSnapshotBytes,
+  SNAPSHOT_FORMAT,
+  SNAPSHOT_SCROLLBACK,
+} from "../../shared/snapshot.js";
+import { isSameTerminalSize } from "../../shared/terminal-size.js";
+import {
   applyInputToTrackingState,
-  EMPTY_SNAPSHOT,
   inferCmdCwdFromSubmittedCommand,
   inferCmdPromptCwdFromOutput,
   INITIAL_INPUT_TRACKING_STATE,
   markPromptReady,
   parseIntegrationChunk,
-  type SnapshotAccumulatorState,
+  stripInitialTerminalNoise,
 } from "../../shared/testable.js";
 import { deriveTabTitle } from "../../shared/paths.js";
 import type {
@@ -25,12 +32,22 @@ import type {
 } from "../../shared/types.js";
 import { DatabaseService } from "./database.js";
 import { ShellCatalog } from "./shell-catalog.js";
+import {
+  cleanupBootstrapAssets,
+  cleanupStaleBootstrapFiles,
+  createShellBootstrapAssets,
+} from "./shell-bootstrap.js";
+
+const { Terminal: HeadlessTerminal } = xtermHeadlessPackage;
+const { SerializeAddon } = xtermSerializePackage;
 
 interface RuntimeTab {
   tabId: string;
   projectId: string;
   shellProfileId: string;
   pty: IPty | null;
+  headless: InstanceType<typeof HeadlessTerminal>;
+  serializer: InstanceType<typeof SerializeAddon>;
   status: TabRuntimeSummary["status"];
   pid: number | null;
   exitCode: number | null;
@@ -38,13 +55,43 @@ interface RuntimeTab {
   promptTrackingValid: boolean;
   currentInputBuffer: string;
   alternateScreenActive: boolean;
+  suppressInitialRenderNoise: boolean;
   currentCwd: string | null;
-  snapshotState: SnapshotAccumulatorState;
   flushTimer: NodeJS.Timeout | null;
   supportsIntegration: boolean;
+  operationQueue: Promise<void>;
+  outputSequence: number;
+  lastCommittedSequence: number;
+  snapshotDirty: boolean;
+  lastSerializedByteCount: number;
+  bootstrapCleanupPaths: string[];
+  disposed: boolean;
 }
 
+type TerminalWriter = {
+  write(data: string, callback?: () => void): void;
+};
+
 const SNAPSHOT_DEBOUNCE_MS = 500;
+
+function writeTerminalData(terminal: TerminalWriter, data: string): Promise<void> {
+  if (!data) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    terminal.write(data, resolve);
+  });
+}
+
+function serializeTerminal(runtime: RuntimeTab): string {
+  const serializedState = runtime.serializer.serialize({
+    excludeAltBuffer: true,
+    scrollback: SNAPSHOT_SCROLLBACK,
+  });
+  runtime.lastSerializedByteCount = countSnapshotBytes(serializedState);
+  return serializedState;
+}
 
 export class PtyManager {
   private readonly runtimes = new Map<string, RuntimeTab>();
@@ -53,7 +100,9 @@ export class PtyManager {
     private readonly database: DatabaseService,
     private readonly shellCatalog: ShellCatalog,
     private readonly onTerminalEvent: (event: TerminalEvent) => void,
-  ) {}
+  ) {
+    cleanupStaleBootstrapFiles();
+  }
 
   getRuntimeSummary(tabId: string): TabRuntimeSummary | null {
     const runtime = this.runtimes.get(tabId);
@@ -65,28 +114,42 @@ export class PtyManager {
     project: Project,
     tab: SavedTerminalTab,
     shellProfile: ShellProfile,
-  ): Promise<{ runtime: TabRuntimeSummary; liveOutput: string }> {
+  ): Promise<{
+    runtime: TabRuntimeSummary;
+    serializedState: string;
+    replayRevision: number;
+  }> {
     const existing = this.runtimes.get(tab.id);
     if (existing) {
-      if (existing.pty && existing.status === "running") {
-        existing.pty.resize(input.cols, input.rows);
-      }
+      this.resizeRuntime(existing, input.cols, input.rows);
+      const replay = await this.captureReplayState(existing);
       return {
         runtime: this.toRuntimeSummary(existing),
-        liveOutput: existing.snapshotState.serializedBuffer,
+        serializedState: replay.serializedState,
+        replayRevision: replay.replayRevision,
       };
     }
 
     const desiredCwd = this.resolveSpawnCwd(project, tab);
-
-    const runtime = this.createRuntime(tab, shellProfile, {
+    const persistedSnapshot = this.database.getSnapshot(tab.id);
+    const bootstrapAssets =
+      persistedSnapshot?.snapshotFormat === SNAPSHOT_FORMAT &&
+      persistedSnapshot.transcriptText
+        ? createShellBootstrapAssets(shellProfile, persistedSnapshot.transcriptText)
+        : null;
+    const runtime = this.createRuntime(tab, shellProfile, { cols: input.cols, rows: input.rows }, {
       currentCwd: desiredCwd,
       supportsIntegration: shellProfile.supportsIntegration,
+      suppressInitialRenderNoise: Boolean(persistedSnapshot?.transcriptText),
+      bootstrapCleanupPaths: bootstrapAssets?.cleanupPaths ?? [],
     });
     this.runtimes.set(tab.id, runtime);
 
     try {
-      const launch = this.shellCatalog.resolveLaunch(shellProfile);
+      const launch = this.shellCatalog.resolveLaunch(
+        shellProfile,
+        bootstrapAssets?.scriptPath,
+      );
       const pty = spawn(launch.executable, launch.args, {
         cols: input.cols,
         rows: input.rows,
@@ -108,40 +171,50 @@ export class PtyManager {
         runtime.currentInputBuffer = promptReady.currentInputBuffer;
       }
 
-      pty.onData((chunk) => this.handleData(tab, shellProfile, runtime, chunk));
+      pty.onData((chunk) => {
+        void this.handleData(tab, shellProfile, runtime, chunk);
+      });
       pty.onExit(({ exitCode }) => {
+        if (!this.runtimes.has(runtime.tabId)) {
+          return;
+        }
+
         runtime.status = "exited";
         runtime.exitCode = exitCode;
         runtime.pid = null;
         runtime.pty = null;
         runtime.promptTrackingValid = false;
         runtime.currentInputBuffer = "";
-        this.flushSnapshot(runtime);
+        runtime.snapshotDirty = true;
+        void this.flushSnapshot(runtime);
         this.emitStatus(runtime);
       });
 
       this.emitStatus(runtime);
-      return {
-        runtime: this.toRuntimeSummary(runtime),
-        liveOutput: runtime.snapshotState.serializedBuffer,
-      };
     } catch (error) {
+      cleanupBootstrapAssets(runtime.bootstrapCleanupPaths);
+      runtime.bootstrapCleanupPaths = [];
       runtime.status = "error";
       runtime.errorMessage =
         error instanceof Error ? error.message : "Unknown PTY spawn error";
       this.emitStatus(runtime);
-      return {
-        runtime: this.toRuntimeSummary(runtime),
-        liveOutput: "",
-      };
     }
+
+    const replay = await this.captureReplayState(runtime);
+    return {
+      runtime: this.toRuntimeSummary(runtime),
+      serializedState: replay.serializedState,
+      replayRevision: replay.replayRevision,
+    };
   }
 
   resizeTab(tabId: string, cols: number, rows: number): void {
     const runtime = this.runtimes.get(tabId);
-    if (runtime?.pty && runtime.status === "running") {
-      runtime.pty.resize(cols, rows);
+    if (!runtime) {
+      return;
     }
+
+    this.resizeRuntime(runtime, cols, rows);
   }
 
   writeToTab(tabId: string, data: string): void {
@@ -231,31 +304,60 @@ export class PtyManager {
     project: Project,
     tab: SavedTerminalTab,
     shellProfile: ShellProfile,
-  ): Promise<{ runtime: TabRuntimeSummary; liveOutput: string }> {
-    this.disposeRuntime(tab.id, false);
+  ): Promise<{
+    runtime: TabRuntimeSummary;
+    serializedState: string;
+    replayRevision: number;
+  }> {
+    await this.disposeRuntime(tab.id, false);
     return this.activateTab(input, project, tab, shellProfile);
   }
 
   closeTab(tabId: string): void {
-    this.disposeRuntime(tabId, true);
+    void this.disposeRuntime(tabId, true);
   }
 
   shutdown(): void {
     for (const tabId of this.runtimes.keys()) {
-      this.disposeRuntime(tabId, true);
+      void this.disposeRuntime(tabId, true);
     }
+  }
+
+  async persistSnapshots(): Promise<void> {
+    await Promise.all(
+      [...this.runtimes.values()].map(async (runtime) => {
+        if (runtime.flushTimer) {
+          clearTimeout(runtime.flushTimer);
+          runtime.flushTimer = null;
+        }
+        await this.flushSnapshot(runtime);
+      }),
+    );
   }
 
   private createRuntime(
     tab: SavedTerminalTab,
     shellProfile: ShellProfile,
+    dimensions: { cols: number; rows: number },
     overrides?: Partial<RuntimeTab>,
   ): RuntimeTab {
+    const headless = new HeadlessTerminal({
+      allowProposedApi: true,
+      cols: dimensions.cols,
+      rows: dimensions.rows,
+      scrollback: SNAPSHOT_SCROLLBACK,
+      convertEol: false,
+    });
+    const serializer = new SerializeAddon();
+    headless.loadAddon(serializer);
+
     return {
       tabId: tab.id,
       projectId: tab.projectId,
       shellProfileId: tab.shellProfileId,
       pty: null,
+      headless,
+      serializer,
       status: "not_started",
       pid: null,
       exitCode: null,
@@ -263,21 +365,36 @@ export class PtyManager {
       promptTrackingValid: INITIAL_INPUT_TRACKING_STATE.promptTrackingValid,
       currentInputBuffer: INITIAL_INPUT_TRACKING_STATE.currentInputBuffer,
       alternateScreenActive: false,
+      suppressInitialRenderNoise: true,
       currentCwd: tab.lastKnownCwd,
-      snapshotState: EMPTY_SNAPSHOT,
       flushTimer: null,
       supportsIntegration: shellProfile.supportsIntegration,
+      operationQueue: Promise.resolve(),
+      outputSequence: 0,
+      lastCommittedSequence: 0,
+      snapshotDirty: false,
+      lastSerializedByteCount: 0,
+      bootstrapCleanupPaths: [],
+      disposed: false,
       ...overrides,
     };
   }
 
-  private handleData(
+  private async handleData(
     tab: SavedTerminalTab,
     shellProfile: ShellProfile,
     runtime: RuntimeTab,
     chunk: string,
-  ): void {
+  ): Promise<void> {
+    if (!this.runtimes.has(runtime.tabId)) {
+      return;
+    }
+
     const parsed = parseIntegrationChunk(chunk);
+    let displayData = runtime.suppressInitialRenderNoise
+      ? stripInitialTerminalNoise(parsed.sanitized)
+      : parsed.sanitized;
+
     if (parsed.enteredAlternateScreen) {
       runtime.alternateScreenActive = true;
       runtime.promptTrackingValid = false;
@@ -285,6 +402,8 @@ export class PtyManager {
     }
     if (parsed.exitedAlternateScreen) {
       runtime.alternateScreenActive = false;
+      runtime.snapshotDirty = true;
+      this.scheduleSnapshotFlush(runtime);
     }
 
     for (const cwd of parsed.cwdSignals) {
@@ -293,7 +412,7 @@ export class PtyManager {
     }
 
     if (shellProfile.id === "cmd") {
-      const inferred = inferCmdPromptCwdFromOutput(runtime.currentCwd, parsed.sanitized);
+      const inferred = inferCmdPromptCwdFromOutput(runtime.currentCwd, displayData);
       if (inferred && inferred !== runtime.currentCwd) {
         runtime.currentCwd = inferred;
         this.persistCwdAndTitle(tab, shellProfile, inferred);
@@ -306,23 +425,41 @@ export class PtyManager {
       runtime.currentInputBuffer = promptReady.currentInputBuffer;
     } else if (
       shellProfile.id === "cmd" &&
-      /[A-Za-z]:\\.*>\s*$/.test(parsed.sanitized.trimEnd())
+      /[A-Za-z]:\\.*>\s*$/.test(displayData.trimEnd())
     ) {
       const promptReady = markPromptReady();
       runtime.promptTrackingValid = promptReady.promptTrackingValid;
       runtime.currentInputBuffer = promptReady.currentInputBuffer;
     }
 
-    if (!runtime.alternateScreenActive && parsed.sanitized) {
-      runtime.snapshotState = appendSnapshotChunk(runtime.snapshotState, parsed.sanitized);
-      this.scheduleSnapshotFlush(runtime);
+    if (
+      runtime.suppressInitialRenderNoise &&
+      (parsed.promptSignals.length > 0 ||
+        parsed.cwdSignals.length > 0 ||
+        /\S/.test(displayData))
+    ) {
+      runtime.suppressInitialRenderNoise = false;
     }
 
-    if (parsed.sanitized) {
+    if (displayData) {
+      const sequence = runtime.outputSequence + 1;
+      runtime.outputSequence = sequence;
+      void this.enqueueRuntimeTask(runtime, async () => {
+        if (runtime.disposed) {
+          return;
+        }
+
+        await writeTerminalData(runtime.headless, displayData);
+        runtime.lastCommittedSequence = sequence;
+        runtime.snapshotDirty = true;
+        this.scheduleSnapshotFlush(runtime);
+      });
+
       this.onTerminalEvent({
         type: "output",
         tabId: runtime.tabId,
-        data: parsed.sanitized,
+        data: displayData,
+        sequence,
       });
     }
 
@@ -356,20 +493,89 @@ export class PtyManager {
 
     runtime.flushTimer = setTimeout(() => {
       runtime.flushTimer = null;
-      this.flushSnapshot(runtime);
+      void this.flushSnapshot(runtime);
     }, SNAPSHOT_DEBOUNCE_MS);
   }
 
-  private flushSnapshot(runtime: RuntimeTab): void {
-    this.database.upsertSnapshot({
-      tabId: runtime.tabId,
-      serializedBuffer: runtime.snapshotState.serializedBuffer,
-      lineCount: runtime.snapshotState.lineCount,
-      byteCount: runtime.snapshotState.byteCount,
+  private async flushSnapshot(runtime: RuntimeTab): Promise<void> {
+    if (!runtime.snapshotDirty) {
+      return;
+    }
+
+    await this.enqueueRuntimeTask(runtime, () => {
+      if (!runtime.snapshotDirty || runtime.alternateScreenActive || runtime.disposed) {
+        return;
+      }
+
+      this.persistSnapshotNow(runtime);
     });
   }
 
-  private disposeRuntime(tabId: string, persistSnapshot: boolean): void {
+  private persistSnapshotNow(runtime: RuntimeTab): void {
+    if (runtime.alternateScreenActive || runtime.disposed) {
+      return;
+    }
+
+    const transcriptText = buildTerminalTranscript(runtime.headless.buffer.normal);
+    runtime.lastSerializedByteCount = countSnapshotBytes(transcriptText);
+    runtime.snapshotDirty = false;
+    this.database.upsertSnapshot({
+      tabId: runtime.tabId,
+      snapshotFormat: SNAPSHOT_FORMAT,
+      transcriptText,
+      byteCount: runtime.lastSerializedByteCount,
+    });
+  }
+
+  private async captureReplayState(runtime: RuntimeTab): Promise<{
+    serializedState: string;
+    replayRevision: number;
+  }> {
+    return this.enqueueRuntimeTask(runtime, () => {
+      const serializedState = serializeTerminal(runtime);
+      return {
+        serializedState,
+        replayRevision: runtime.lastCommittedSequence,
+      };
+    });
+  }
+
+  private resizeRuntime(runtime: RuntimeTab, cols: number, rows: number): void {
+    if (isSameTerminalSize({ cols: runtime.headless.cols, rows: runtime.headless.rows }, { cols, rows })) {
+      return;
+    }
+
+    if (runtime.pty && runtime.status === "running") {
+      runtime.pty.resize(cols, rows);
+    }
+
+    void this.enqueueRuntimeTask(runtime, () => {
+      if (runtime.disposed) {
+        return;
+      }
+
+      runtime.headless.resize(cols, rows);
+      runtime.snapshotDirty = true;
+      this.scheduleSnapshotFlush(runtime);
+    });
+  }
+
+  private enqueueRuntimeTask<T>(
+    runtime: RuntimeTab,
+    task: () => Promise<T> | T,
+  ): Promise<T> {
+    const nextTask = runtime.operationQueue.then(
+      () => (runtime.disposed ? (undefined as T) : task()),
+      () => (runtime.disposed ? (undefined as T) : task()),
+    );
+    runtime.operationQueue = nextTask.then(
+      () => undefined,
+      () => undefined,
+    );
+    return nextTask;
+  }
+
+  private async disposeRuntime(tabId: string, persistSnapshot: boolean): Promise<void> {
     const runtime = this.runtimes.get(tabId);
     if (!runtime) {
       return;
@@ -381,9 +587,10 @@ export class PtyManager {
     }
 
     if (persistSnapshot) {
-      this.flushSnapshot(runtime);
+      await this.flushSnapshot(runtime);
     }
 
+    runtime.disposed = true;
     if (runtime.pty) {
       try {
         runtime.pty.kill();
@@ -392,6 +599,8 @@ export class PtyManager {
       }
     }
 
+    runtime.headless.dispose();
+    cleanupBootstrapAssets(runtime.bootstrapCleanupPaths);
     this.runtimes.delete(tabId);
   }
 
@@ -415,7 +624,7 @@ export class PtyManager {
       promptTrackingValid: runtime.promptTrackingValid,
       currentInputBuffer: runtime.currentInputBuffer,
       alternateScreenActive: runtime.alternateScreenActive,
-      sessionOutputByteCount: runtime.snapshotState.byteCount,
+      sessionOutputByteCount: runtime.lastSerializedByteCount,
       currentCwd: runtime.currentCwd,
       shellProfileId: runtime.shellProfileId,
     };
