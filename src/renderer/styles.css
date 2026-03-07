@@ -140,6 +140,63 @@ kbd {
   background-clip: padding-box;
 }
 
+html[data-scrollbars="aggressive"] .project-list,
+html[data-scrollbars="aggressive"] .tab-strip,
+html[data-scrollbars="aggressive"] .restored-pane pre,
+html[data-scrollbars="aggressive"] .fatal-screen__panel pre,
+html[data-scrollbars="aggressive"] .history-list,
+html[data-scrollbars="aggressive"] .terminal-host .xterm-viewport {
+  scrollbar-color: transparent transparent;
+}
+
+html[data-scrollbars="aggressive"] .project-list:hover,
+html[data-scrollbars="aggressive"] .tab-strip:hover,
+html[data-scrollbars="aggressive"] .restored-pane pre:hover,
+html[data-scrollbars="aggressive"] .fatal-screen__panel pre:hover,
+html[data-scrollbars="aggressive"] .history-list:hover,
+html[data-scrollbars="aggressive"] .terminal-host .xterm-viewport:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+html[data-scrollbars="aggressive"] .project-list::-webkit-scrollbar,
+html[data-scrollbars="aggressive"] .tab-strip::-webkit-scrollbar,
+html[data-scrollbars="aggressive"] .restored-pane pre::-webkit-scrollbar,
+html[data-scrollbars="aggressive"] .fatal-screen__panel pre::-webkit-scrollbar,
+html[data-scrollbars="aggressive"] .history-list::-webkit-scrollbar,
+html[data-scrollbars="aggressive"] .terminal-host .xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+html[data-scrollbars="aggressive"] .project-list::-webkit-scrollbar-thumb,
+html[data-scrollbars="aggressive"] .tab-strip::-webkit-scrollbar-thumb,
+html[data-scrollbars="aggressive"] .restored-pane pre::-webkit-scrollbar-thumb,
+html[data-scrollbars="aggressive"] .fatal-screen__panel pre::-webkit-scrollbar-thumb,
+html[data-scrollbars="aggressive"] .history-list::-webkit-scrollbar-thumb,
+html[data-scrollbars="aggressive"] .terminal-host .xterm-viewport::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+html[data-scrollbars="aggressive"] .project-list:hover::-webkit-scrollbar-thumb,
+html[data-scrollbars="aggressive"] .tab-strip:hover::-webkit-scrollbar-thumb,
+html[data-scrollbars="aggressive"] .restored-pane pre:hover::-webkit-scrollbar-thumb,
+html[data-scrollbars="aggressive"] .fatal-screen__panel pre:hover::-webkit-scrollbar-thumb,
+html[data-scrollbars="aggressive"] .history-list:hover::-webkit-scrollbar-thumb,
+html[data-scrollbars="aggressive"] .terminal-host .xterm-viewport:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+html[data-scrollbars="aggressive"] .project-list:hover::-webkit-scrollbar-thumb:hover,
+html[data-scrollbars="aggressive"] .tab-strip:hover::-webkit-scrollbar-thumb:hover,
+html[data-scrollbars="aggressive"] .restored-pane pre:hover::-webkit-scrollbar-thumb:hover,
+html[data-scrollbars="aggressive"] .fatal-screen__panel pre:hover::-webkit-scrollbar-thumb:hover,
+html[data-scrollbars="aggressive"] .history-list:hover::-webkit-scrollbar-thumb:hover,
+html[data-scrollbars="aggressive"] .terminal-host .xterm-viewport:hover::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);

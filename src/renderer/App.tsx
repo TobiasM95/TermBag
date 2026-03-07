@@ -28,11 +28,13 @@ type RenameTabState = {
 type ThemeMode = "dark" | "light";
 type TabAlignment = "left" | "center" | "right";
 type ProjectSortMode = "created" | "alphabetical";
+type ScrollbarMode = "minimal" | "aggressive";
 
 const THEME_STORAGE_KEY = "termbag-theme-mode";
 const TAB_ALIGNMENT_STORAGE_KEY = "termbag-tab-alignment";
 const PROJECT_SORT_STORAGE_KEY = "termbag-project-sort-mode";
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "termbag-sidebar-collapsed";
+const SCROLLBAR_MODE_STORAGE_KEY = "termbag-scrollbar-mode";
 
 function getShellLabel(shellProfileId: string): string {
   switch (shellProfileId) {
@@ -115,6 +117,14 @@ export function App() {
     const stored = window.localStorage.getItem(PROJECT_SORT_STORAGE_KEY);
     return stored === "alphabetical" ? "alphabetical" : "created";
   });
+  const [scrollbarMode, setScrollbarMode] = useState<ScrollbarMode>(() => {
+    if (typeof window === "undefined") {
+      return "minimal";
+    }
+
+    const stored = window.localStorage.getItem(SCROLLBAR_MODE_STORAGE_KEY);
+    return stored === "aggressive" ? "aggressive" : "minimal";
+  });
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
@@ -131,6 +141,11 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem(PROJECT_SORT_STORAGE_KEY, projectSortMode);
   }, [projectSortMode]);
+
+  useEffect(() => {
+    document.documentElement.dataset.scrollbars = scrollbarMode;
+    window.localStorage.setItem(SCROLLBAR_MODE_STORAGE_KEY, scrollbarMode);
+  }, [scrollbarMode]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -498,10 +513,12 @@ export function App() {
           themeMode={themeMode}
           tabAlignment={tabAlignment}
           projectSortMode={projectSortMode}
+          scrollbarMode={scrollbarMode}
           onClose={() => setSettingsOpen(false)}
           onThemeChange={setThemeMode}
           onTabAlignmentChange={setTabAlignment}
           onProjectSortModeChange={setProjectSortMode}
+          onScrollbarModeChange={setScrollbarMode}
         />
       ) : null}
 
@@ -693,10 +710,12 @@ interface SettingsModalProps {
   themeMode: ThemeMode;
   tabAlignment: TabAlignment;
   projectSortMode: ProjectSortMode;
+  scrollbarMode: ScrollbarMode;
   onClose(): void;
   onThemeChange(theme: ThemeMode): void;
   onTabAlignmentChange(alignment: TabAlignment): void;
   onProjectSortModeChange(mode: ProjectSortMode): void;
+  onScrollbarModeChange(mode: ScrollbarMode): void;
 }
 
 interface ShellPickerModalProps {
@@ -755,10 +774,12 @@ function SettingsModal({
   themeMode,
   tabAlignment,
   projectSortMode,
+  scrollbarMode,
   onClose,
   onThemeChange,
   onTabAlignmentChange,
   onProjectSortModeChange,
+  onScrollbarModeChange,
 }: SettingsModalProps) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -822,6 +843,25 @@ function SettingsModal({
               onClick={() => onProjectSortModeChange("alphabetical")}
             >
               A-Z
+            </button>
+          </div>
+        </div>
+        <div className="settings-group">
+          <span className="settings-group__label">Scrollbars</span>
+          <div className="theme-toggle">
+            <button
+              type="button"
+              className={`ghost-button ${scrollbarMode === "minimal" ? "theme-toggle__active" : ""}`}
+              onClick={() => onScrollbarModeChange("minimal")}
+            >
+              Minimal
+            </button>
+            <button
+              type="button"
+              className={`ghost-button ${scrollbarMode === "aggressive" ? "theme-toggle__active" : ""}`}
+              onClick={() => onScrollbarModeChange("aggressive")}
+            >
+              Auto-hide
             </button>
           </div>
         </div>
