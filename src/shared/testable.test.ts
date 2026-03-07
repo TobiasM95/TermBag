@@ -6,6 +6,7 @@ import {
   inferCmdPromptCwdFromOutput,
   markPromptReady,
   parseIntegrationChunk,
+  sanitizeSnapshotForDisplay,
 } from "./testable.js";
 
 describe("snapshot retention", () => {
@@ -17,6 +18,14 @@ describe("snapshot retention", () => {
     expect(state.lineCount).toBe(3000);
     expect(state.serializedBuffer.startsWith("line-205")).toBe(true);
     expect(state.serializedBuffer.endsWith("line-3204")).toBe(true);
+  });
+
+  it("sanitizes ANSI-rich terminal output for restored preview rendering", () => {
+    const text = sanitizeSnapshotForDisplay(
+      "\u001b[?9001h\u001b[?1004h\u001b[2J\u001b[m\u001b[HC:\\Users\\tobim\\Documents>\rC:\\Users\\tobim\\Documents>\u001b[K",
+    );
+
+    expect(text).toBe("C:\\Users\\tobim\\Documents>");
   });
 });
 

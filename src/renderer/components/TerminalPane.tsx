@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "xterm";
 import type { Project, WorkspaceTab } from "../../shared/types";
+import { sanitizeSnapshotForDisplay } from "../../shared/snapshot";
 import { useAppStore } from "../store/app-store";
 
 interface TerminalPaneProps {
@@ -143,14 +144,17 @@ export function TerminalPane({ project, tab, themeMode }: TerminalPaneProps) {
   const runtime = tab.runtime;
   const showSnapshot = Boolean(tab.snapshot?.serializedBuffer);
   const showRestart = runtime?.status === "exited" || runtime?.status === "error";
+  const restoredSnapshotText = tab.snapshot
+    ? sanitizeSnapshotForDisplay(tab.snapshot.serializedBuffer)
+    : "";
 
   return (
     <section className="terminal-pane">
-      {showSnapshot ? (
+      {showSnapshot && restoredSnapshotText ? (
         <>
           <div className="restored-pane">
             <div className="restored-pane__label">Restored snapshot</div>
-            <pre>{tab.snapshot?.serializedBuffer}</pre>
+            <pre>{restoredSnapshotText}</pre>
           </div>
           <div className="restored-divider">
             <span>Fresh shell output below</span>
