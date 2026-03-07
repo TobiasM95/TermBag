@@ -1,50 +1,64 @@
 # TermBag
 
-TermBag is a Windows-first Electron desktop app for organizing terminal tabs by project without turning the terminal into a full IDE.
+TermBag is a Windows-first desktop app for keeping terminal work organized by project without turning the terminal into a full IDE.
 
-Phase 1 focuses on:
+It groups tabs under projects, remembers what you were working on, restores visible history on restart, and keeps the actual shell experience front and center.
+
+## Current Status
+
+This repository currently contains the **Phase 1** implementation.
+
+Phase 1 is focused on:
 
 - project-based terminal workspaces
-- built-in Windows shell profiles
-- local persistence for projects, tabs, cwd, history, and terminal snapshots
-- lazy restore of saved tabs
-- project-scoped command recall with `Ctrl+Shift+R`
+- multiple shell tabs per project
+- local persistence
+- lazy restore
+- project-scoped command recall
+- a usable desktop UI for daily local terminal work
 
-## Phase 1 Features
+Phase 1 is already implemented and currently builds and tests successfully.
+
+## What TermBag Does
 
 - Create, edit, and delete projects
-- Left sidebar with project list
-- Multiple terminal tabs per project
-- Built-in shell profile selection:
-  - `pwsh`
-  - `powershell.exe`
-  - `cmd.exe`
-- SQLite-backed local persistence
-- Restored snapshots shown immediately when reopening a project
-- Lazy shell respawn:
-  - selected restored tab starts immediately
-  - other restored tabs stay dormant until selected
-- Clear divider between restored snapshot content and fresh live output
-- Project-scoped command history overlay on `Ctrl+Shift+R`
-- PowerShell session-local prompt and cwd tracking
-- `cmd.exe` fallback input and cwd heuristics
-- Explicit UI states for:
-  - missing project paths
-  - shell startup failures
-  - shell exit states
+- Open multiple tabs per project
+- Choose a default shell per project
+- Open new tabs with either the project default shell or a different shell
+- Persist projects, tabs, terminal history snapshots, cwd state, and command history locally
+- Restore saved terminal history directly into fresh shell sessions on app restart
+- Reopen the last selected project and the last active tab per project
+- Keep terminal focus on app start and on project switch
+- Provide project-scoped command recall with `Ctrl+Shift+R`
+- Support a custom title bar with the current project name and tab strip
+- Persist UI state such as sidebar collapse, theme, tab alignment, project ordering, and window size/maximized state
 
-## What Phase 1 Does Not Do
+## Phase 1 Shell Support
 
-- Split panes
-- Tasks
-- Favorites
-- Global history browser
-- Search panel
-- Remote sessions
-- Sync or collaboration
-- Custom shell definitions
-- True process resurrection
-- Alternate-screen snapshot restore
+Built-in Windows shell profiles:
+
+- `pwsh`
+- `powershell.exe`
+- `cmd.exe`
+
+Behavior today:
+
+- PowerShell shells use session-local prompt and cwd integration
+- `cmd.exe` uses fallback heuristics for cwd and prompt tracking
+- history restore works by printing persisted transcript history into the real fresh shell on startup
+
+That last point matters: Phase 1 does **not** resurrect the original shell process. It restores prior visible history and then starts a fresh live shell underneath it.
+
+## What Phase 1 Does Not Include
+
+- split panes
+- tasks
+- remote sessions
+- sync
+- collaboration
+- user-defined custom shell profiles
+- true process resurrection
+- alternate-screen/TUI restoration
 
 ## Tech Stack
 
@@ -62,132 +76,119 @@ Phase 1 focuses on:
 
 ```text
 src/
-  main/        Electron main process, IPC, PTY lifecycle, persistence services
+  main/        Electron main process, PTY lifecycle, persistence, shell startup
   preload/     Typed preload bridge
   renderer/    React UI, Zustand store, xterm integration
   shared/      Shared types and pure logic
   types/       Local type declarations
+build/         App icon assets
 ```
 
-Important files:
+Key files:
 
-- [package.json](C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/package.json)
-- [src/main/index.ts](C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/src/main/index.ts)
-- [src/main/services/app-service.ts](C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/src/main/services/app-service.ts)
-- [src/main/services/database.ts](C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/src/main/services/database.ts)
-- [src/main/services/pty-manager.ts](C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/src/main/services/pty-manager.ts)
-- [src/renderer/App.tsx](C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/src/renderer/App.tsx)
-- [TODO.md](C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/TODO.md)
+- `src/main/index.ts`
+- `src/main/services/app-service.ts`
+- `src/main/services/database.ts`
+- `src/main/services/pty-manager.ts`
+- `src/main/services/shell-bootstrap.ts`
+- `src/renderer/App.tsx`
+- `src/renderer/components/TerminalPane.tsx`
+- `src/renderer/store/app-store.ts`
 
-## Persistence and Privacy
+## Local Persistence
 
-Persistence is always on in Phase 1.
+TermBag is local-first in Phase 1.
 
-TermBag stores the following locally on the machine:
+It stores the following on the local machine:
 
 - projects
-- saved terminal tabs
-- terminal snapshots
-- cwd state
-- project-scoped command history
+- saved tabs
+- tab metadata
+- project command history
+- terminal transcript snapshots
+- remembered UI state
+- remembered window state
 
 SQLite database location:
 
-- Electron `app.getPath("userData")` directory
-- database file name: `termbag.sqlite`
+- Electron `app.getPath("userData")`
+- file name: `termbag.sqlite`
 
-Snapshot retention is bounded:
+## Restore Model
 
-- max `3,000` lines
-- or `1 MiB` serialized size
-- newest content is retained
+When you reopen the app:
 
-## Restore Behavior
+1. TermBag restores projects and tabs from SQLite.
+2. It restores the previously selected project.
+3. It restores the last active tab for each project.
+4. A saved transcript is printed into a fresh shell session on startup.
+5. The restored tab becomes a normal live shell again.
 
-When a project is reopened:
+When a tab is already alive during the current app session, TermBag reuses the live PTY/runtime rather than treating it as a cold restore.
 
-1. Saved tabs are loaded from SQLite.
-2. Saved snapshots are rendered immediately.
-3. Only the selected tab respawns a live shell automatically.
-4. Other tabs remain dormant snapshots until selected.
-5. If a live tab was already started during the current app session, it is reused.
+## Development Requirements
 
-Phase 1 restore does not resume the original process. It restores a saved snapshot, then starts a fresh shell in the best available cwd.
+Phase 1 is currently **Windows-first**.
 
-## Local Development
-
-### Requirements
+Recommended environment:
 
 - Windows
 - Node.js 22+
-- `pnpm` 10+
-- Visual Studio 2022 Build Tools or Visual Studio 2022 with C++ build support
-- Windows Spectre-mitigated C++ libraries for `node-pty`
+- `pnpm`
+- Visual Studio 2022 Build Tools or Visual Studio 2022 with C++ support
 
-Required Visual Studio individual component for `node-pty` on Windows:
+Native modules in this repo:
+
+- `better-sqlite3`
+- `node-pty`
+
+Those must be rebuilt against Electron's ABI.
+
+Required Windows component for `node-pty`:
 
 - `MSVC v143 - VS 2022 C++ x64/x86 Spectre-mitigated libs (Latest)`
 
-Without that component, Electron-native rebuilds for `node-pty` fail with `MSB8040`.
+Without it, native rebuilds can fail with `MSB8040`.
 
-### Install dependencies
+## Running Locally
+
+Install dependencies:
 
 ```powershell
 pnpm install
 ```
 
-This repo also includes a postinstall native rebuild for Electron addons.
-
-If you need to rerun it manually:
+If needed, rerun the native Electron rebuild manually:
 
 ```powershell
 pnpm run rebuild:native
 ```
 
-### Run the app locally
+Start the app in development mode:
 
 ```powershell
 pnpm dev
 ```
 
-This starts:
-
-- TypeScript watch for Electron main
-- TypeScript watch for preload
-- Vite dev server for the renderer
-- Electron pointed at the local Vite server
-
-### Build for a local production-style test
+Build the app:
 
 ```powershell
 pnpm build
 ```
 
-This outputs:
-
-- renderer bundle in `dist/`
-- Electron main/preload output in `dist-electron/`
-
-### Launch the built app
+Run the built app locally:
 
 ```powershell
 pnpm preview
 ```
 
+Run tests:
+
+```powershell
+pnpm test
+```
+
 ## Native Module Notes
-
-This app uses native modules:
-
-- `better-sqlite3`
-- `node-pty`
-
-They must be built against Electron's ABI, not just your system Node.js ABI.
-
-This repository includes:
-
-- `@electron/rebuild`
-- `pnpm run rebuild:native`
-- a `postinstall` hook that runs the Electron rebuild automatically
 
 If you see an error like:
 
@@ -199,90 +200,51 @@ run:
 pnpm run rebuild:native
 ```
 
-If the rebuild fails with `MSB8040`, install the Visual Studio Spectre-mitigated library component listed above and rerun:
-
-```powershell
-pnpm run rebuild:native
-```
-
-## Testing
-
-Run the automated test suite:
-
-```powershell
-pnpm test
-```
+If rebuild fails with `MSB8040`, install the Spectre-mitigated library component mentioned above and run the rebuild again.
 
 ## App Icon Assets
 
-Store the app icon assets in [`build/`](/C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/build):
+Current icon assets live in `build/`:
 
-- [`logo-tight.png`](/C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/build/logo-tight.png): canonical high-resolution runtime/source icon
-- [`icon.ico`](/C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/build/icon.ico): Windows icon for packaged app builds
+- `build/logo-tight.png` for the runtime/source icon
+- `build/icon.ico` for Windows packaging
 
-Current runtime behavior:
+The Electron window currently uses the PNG icon at runtime.
 
-- Electron uses [`logo-tight.png`](/C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/build/logo-tight.png) for the window/taskbar icon during `pnpm dev` and `pnpm preview`
-- [`icon.ico`](/C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/build/icon.ico) is prepared for future Windows packaging configuration
+## Manual Smoke Test
 
-Current tests cover pure logic around:
+Useful quick checks after `pnpm dev` or `pnpm preview`:
 
-- snapshot retention
-- PowerShell integration marker parsing
-- `cmd.exe` cwd heuristics
-- prompt tracking state
-
-## Manual Smoke Test Checklist
-
-Use this after `pnpm dev` or `pnpm preview`.
-
-1. Create a project with a valid local folder path.
-2. Confirm an initial tab is created automatically.
-3. Run a few commands and confirm output appears normally.
-4. Open a second tab and confirm both tabs remain available.
-5. Press `Ctrl+Shift+R` and confirm project history opens.
-6. Select a history entry when the shell is at a normal prompt and confirm it is inserted.
-7. Close and reopen the app.
-8. Confirm the project list and saved tabs return.
-9. Confirm prior snapshot content appears immediately.
-10. Confirm only the selected restored tab starts live immediately.
-11. Change a project path to a missing folder and confirm the UI blocks shell startup with an explicit error state.
-12. Exit a shell and confirm the tab remains visible with a reopen action.
-
-## Shell Notes
-
-Shell profile defaults:
-
-- prefer `pwsh`
-- otherwise `powershell.exe`
-- otherwise `cmd.exe`
-
-Tracking quality:
-
-- `pwsh` and `powershell.exe` use session-local prompt and cwd integration
-- `cmd.exe` falls back to input capture and simple cwd heuristics
-
-TermBag does not modify user dotfiles, PowerShell profiles, or global shell configuration.
+1. Create a project.
+2. Open multiple tabs with different shells.
+3. Run a few commands.
+4. Restart the app.
+5. Confirm the project, tab selection, and terminal history restore correctly.
+6. Press `Ctrl+Shift+R` and confirm command recall works.
+7. Switch theme, collapse the sidebar, resize/maximize the window, restart, and confirm UI state persists.
 
 ## Known Constraints
 
-- Phase 1 is Windows-only.
-- Alternate-screen content is not restored.
-- Multiline shell editing is not modeled reliably.
-- History insertion only happens when prompt tracking is considered safe.
-- Native shell `Up` and `Down` behavior is intentionally left untouched.
+- Phase 1 is Windows-first.
+- Alternate-screen applications are intentionally excluded from persisted terminal snapshots.
+- Multiline shell editing is not fully modeled.
+- `cmd.exe` tracking is heuristic-based and less precise than PowerShell integration.
+- There is no true shell process resurrection yet; restart restore is transcript-based.
 
-## Scripts
+## Roadmap Context
 
-```json
-{
-  "dev": "Start renderer, Electron main/preload watchers, and the Electron app",
-  "build": "Build Electron main/preload and renderer for production",
-  "preview": "Launch the built Electron app",
-  "test": "Run Vitest"
-}
-```
+This repo is intentionally at the “solid terminal workspace foundation” stage.
 
-## Status
+Phase 1 is about making these parts trustworthy first:
 
-Phase 1 implementation is present in this repository and currently builds and tests successfully with `pnpm`.
+- persistence
+- restore behavior
+- shell lifecycle management
+- local command recall
+- desktop UI ergonomics
+
+Future phases can build on that with more advanced terminal/workspace features once this base remains stable.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](/C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/LICENSE).
