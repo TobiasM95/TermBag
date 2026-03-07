@@ -1,0 +1,187 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { IPC_CHANNELS } from "../shared/ipc.js";
+import type {
+  ActivateTabInput,
+  CreateProjectInput,
+  CreateTabInput,
+  HistoryQuery,
+  RecallHistoryInput,
+  ResizeTabInput,
+  UpdateProjectInput,
+} from "../shared/types.js";
+import { describeStartupFailure } from "./startup-errors.js";
+
+interface AppServiceContract {
+  bootstrap(): unknown;
+  getProjectWorkspace(projectId: string): unknown;
+  createProject(input: CreateProjectInput): unknown;
+  updateProject(input: UpdateProjectInput): unknown;
+  deleteProject(projectId: string): unknown;
+  createTab(input: CreateTabInput): unknown;
+  closeTab(tabId: string): unknown;
+  activateTab(input: ActivateTabInput): unknown;
+  resizeTab(tabId: string, cols: number, rows: number): void;
+  writeToTab(tabId: string, data: string): void;
+  restartTab(input: ActivateTabInput): unknown;
+  listHistory(projectId: string, limit?: number): unknown;
+  recallHistory(tabId: string, commandText: string): unknown;
+  shutdown(): void;
+}
+
+let mainWindow: BrowserWindow | null = null;
+let appService: AppServiceContract | null = null;
+let startupComplete = false;
+let fatalErrorShown = false;
+const CURRENT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(CURRENT_DIR, "../..");
+
+function getPreloadPath(): string {
+  return path.resolve(CURRENT_DIR, "../preload/index.js");
+}
+
+async function createWindow(): Promise<void> {
+  mainWindow = new BrowserWindow({
+    width: 1440,
+    height: 920,
+    minWidth: 1080,
+    minHeight: 720,
+    backgroundColor: "#0e1318",
+    webPreferences: {
+      preload: getPreloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    await mainWindow.loadURL(devServerUrl);
+  } else {
+    await mainWindow.loadFile(path.join(REPO_ROOT, "dist", "index.html"));
+  }
+
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
+}
+
+function registerIpcHandlers(): void {
+  ipcMain.handle(IPC_CHANNELS.bootstrap, () => appService!.bootstrap());
+  ipcMain.handle(IPC_CHANNELS.getProjectWorkspace, (_event, projectId: string) =>
+    appService!.getProjectWorkspace(projectId),
+  );
+  ipcMain.handle(IPC_CHANNELS.createProject, (_event, input: CreateProjectInput) =>
+    appService!.createProject(input),
+  );
+  ipcMain.handle(IPC_CHANNELS.updateProject, (_event, input: UpdateProjectInput) =>
+    appService!.updateProject(input),
+  );
+  ipcMain.handle(IPC_CHANNELS.deleteProject, (_event, projectId: string) =>
+    appService!.deleteProject(projectId),
+  );
+  ipcMain.handle(IPC_CHANNELS.createTab, (_event, input: CreateTabInput) =>
+    appService!.createTab(input),
+  );
+  ipcMain.handle(IPC_CHANNELS.closeTab, (_event, tabId: string) =>
+    appService!.closeTab(tabId),
+  );
+  ipcMain.handle(IPC_CHANNELS.activateTab, (_event, input: ActivateTabInput) =>
+    appService!.activateTab(input),
+  );
+  ipcMain.handle(IPC_CHANNELS.resizeTab, (_event, input: ResizeTabInput) => {
+    appService!.resizeTab(input.tabId, input.cols, input.rows);
+  });
+  ipcMain.handle(IPC_CHANNELS.writeToTab, (_event, tabId: string, data: string) => {
+    appService!.writeToTab(tabId, data);
+  });
+  ipcMain.handle(IPC_CHANNELS.restartTab, (_event, input: ActivateTabInput) =>
+    appService!.restartTab(input),
+  );
+  ipcMain.handle(IPC_CHANNELS.listHistory, (_event, query: HistoryQuery) =>
+    appService!.listHistory(query.projectId, query.limit),
+  );
+  ipcMain.handle(IPC_CHANNELS.recallHistory, (_event, input: RecallHistoryInput) =>
+    appService!.recallHistory(input.tabId, input.commandText),
+  );
+}
+
+async function showFatalStartupError(error: unknown): Promise<void> {
+  if (fatalErrorShown) {
+    return;
+  }
+  fatalErrorShown = true;
+
+  const failure = describeStartupFailure(error);
+  try {
+    await app.whenReady();
+  } catch {
+    // Best effort only.
+  }
+  dialog.showErrorBox(failure.title, failure.message);
+  app.quit();
+}
+
+async function bootstrapApp(): Promise<void> {
+  const [
+    { AppService },
+    { DatabaseService },
+    { PtyManager },
+    { ShellCatalog },
+  ] = await Promise.all([
+    import("./services/app-service.js"),
+    import("./services/database.js"),
+    import("./services/pty-manager.js"),
+    import("./services/shell-catalog.js"),
+  ]);
+
+  const shellCatalog = new ShellCatalog();
+  const database = new DatabaseService(path.join(app.getPath("userData"), "termbag.sqlite"));
+  const ptyManager = new PtyManager(database, shellCatalog, (event) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+    mainWindow.webContents.send(IPC_CHANNELS.terminalEvent, event);
+  });
+  appService = new AppService(database, shellCatalog, ptyManager);
+  registerIpcHandlers();
+  await createWindow();
+  startupComplete = true;
+
+  app.on("activate", async () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      await createWindow();
+    }
+  });
+}
+
+process.on("uncaughtException", (error) => {
+  if (!startupComplete) {
+    void showFatalStartupError(error);
+    return;
+  }
+  console.error(error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  if (!startupComplete) {
+    void showFatalStartupError(reason);
+    return;
+  }
+  console.error(reason);
+});
+
+app.whenReady().then(bootstrapApp).catch((error) => {
+  void showFatalStartupError(error);
+});
+
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    app.quit();
+  }
+});
+
+app.on("before-quit", () => {
+  appService?.shutdown();
+});

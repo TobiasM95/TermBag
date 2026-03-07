@@ -1,0 +1,8 @@
+packages:
+  - .
+
+onlyBuiltDependencies:
+  - electron
+  - better-sqlite3
+  - node-pty
+  - esbuild

@@ -1,0 +1,16 @@
+export const IPC_CHANNELS = {
+  bootstrap: "app:bootstrap",
+  getProjectWorkspace: "projects:getWorkspace",
+  createProject: "projects:create",
+  updateProject: "projects:update",
+  deleteProject: "projects:delete",
+  createTab: "tabs:create",
+  closeTab: "tabs:close",
+  activateTab: "tabs:activate",
+  resizeTab: "tabs:resize",
+  writeToTab: "tabs:write",
+  restartTab: "tabs:restart",
+  listHistory: "history:list",
+  recallHistory: "history:recall",
+  terminalEvent: "terminal:event",
+} as const;
