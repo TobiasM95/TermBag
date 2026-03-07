@@ -23,6 +23,7 @@ interface AppState {
   historyEntries: HistoryEntry[];
   historyLoading: boolean;
   historyError: string | null;
+  clearError(): void;
   bootstrap(): Promise<void>;
   loadProjectWorkspace(projectId: string): Promise<void>;
   selectProject(projectId: string): void;
@@ -85,6 +86,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   historyEntries: [],
   historyLoading: false,
   historyError: null,
+
+  clearError() {
+    set({ error: null });
+  },
 
   async bootstrap() {
     set({ loading: true, error: null });

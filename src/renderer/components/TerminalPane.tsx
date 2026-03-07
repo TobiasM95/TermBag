@@ -7,9 +7,10 @@ import { useAppStore } from "../store/app-store";
 interface TerminalPaneProps {
   project: Project;
   tab: WorkspaceTab;
+  themeMode: "dark" | "light";
 }
 
-export function TerminalPane({ project, tab }: TerminalPaneProps) {
+export function TerminalPane({ project, tab, themeMode }: TerminalPaneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const restartRequestedRef = useRef(false);
   const setTabRuntime = useAppStore((state) => state.setTabRuntime);
@@ -21,32 +22,57 @@ export function TerminalPane({ project, tab }: TerminalPaneProps) {
       return;
     }
 
+    const terminalTheme =
+      themeMode === "dark"
+        ? {
+            background: "#010101",
+            foreground: "#E08421",
+            cursor: "#f0b66f",
+            black: "#050505",
+            red: "#ff5a36",
+            green: "#E08421",
+            yellow: "#f0b66f",
+            blue: "#E08421",
+            magenta: "#E08421",
+            cyan: "#E08421",
+            white: "#f3c58f",
+            brightBlack: "#6b4a20",
+            brightRed: "#ff845d",
+            brightGreen: "#f0b66f",
+            brightYellow: "#f8d5ac",
+            brightBlue: "#f0b66f",
+            brightMagenta: "#f0b66f",
+            brightCyan: "#f0b66f",
+            brightWhite: "#fff4e8",
+          }
+        : {
+            background: "#ffffff",
+            foreground: "#111111",
+            cursor: "#111111",
+            black: "#111111",
+            red: "#aa2d00",
+            green: "#333333",
+            yellow: "#555555",
+            blue: "#111111",
+            magenta: "#222222",
+            cyan: "#333333",
+            white: "#666666",
+            brightBlack: "#444444",
+            brightRed: "#c24400",
+            brightGreen: "#555555",
+            brightYellow: "#777777",
+            brightBlue: "#222222",
+            brightMagenta: "#333333",
+            brightCyan: "#444444",
+            brightWhite: "#000000",
+          };
+
     const terminal = new Terminal({
       convertEol: true,
       cursorBlink: true,
       fontFamily: "'Cascadia Code', Consolas, monospace",
       fontSize: 13,
-      theme: {
-        background: "#010101",
-        foreground: "#ff9a1f",
-        cursor: "#ffbf73",
-        black: "#050505",
-        red: "#ff5a36",
-        green: "#ff9a1f",
-        yellow: "#ffbf73",
-        blue: "#ff9a1f",
-        magenta: "#ff9a1f",
-        cyan: "#ff9a1f",
-        white: "#ffbf73",
-        brightBlack: "#5b3410",
-        brightRed: "#ff845d",
-        brightGreen: "#ffbf73",
-        brightYellow: "#ffd7a1",
-        brightBlue: "#ffbf73",
-        brightMagenta: "#ffbf73",
-        brightCyan: "#ffbf73",
-        brightWhite: "#fff0dc",
-      },
+      theme: terminalTheme,
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
@@ -112,7 +138,7 @@ export function TerminalPane({ project, tab }: TerminalPaneProps) {
       disposeInput.dispose();
       terminal.dispose();
     };
-  }, [project.id, sessionRevision, setTabRuntime, tab.id]);
+  }, [project.id, sessionRevision, setTabRuntime, tab.id, themeMode]);
 
   const runtime = tab.runtime;
   const showSnapshot = Boolean(tab.snapshot?.serializedBuffer);
@@ -120,17 +146,6 @@ export function TerminalPane({ project, tab }: TerminalPaneProps) {
 
   return (
     <section className="terminal-pane">
-      <header className="terminal-status-bar">
-        <div>
-          <strong>{tab.title}</strong>
-          <span>{runtime?.currentCwd ?? tab.lastKnownCwd ?? project.rootPath}</span>
-        </div>
-        <div className="terminal-flags">
-          <span>{runtime?.status ?? "not_started"}</span>
-          <span>{runtime?.promptTrackingValid ? "prompt tracked" : "prompt untrusted"}</span>
-        </div>
-      </header>
-
       {showSnapshot ? (
         <>
           <div className="restored-pane">

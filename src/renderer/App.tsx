@@ -14,10 +14,13 @@ type ModalState =
   | { mode: "edit"; project: Project }
   | null;
 
+type ThemeMode = "dark" | "light";
+
+const THEME_STORAGE_KEY = "termbag-theme-mode";
+
 export function App() {
   const hasPreloadApi =
     typeof window !== "undefined" && typeof window.termbag !== "undefined";
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const {
     bootstrapped,
@@ -41,11 +44,27 @@ export function App() {
     closeTab,
     loadHistory,
     applyTerminalEvent,
+    clearError,
   } = useAppStore();
 
   const [modalState, setModalState] = useState<ModalState>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [recallNotice, setRecallNotice] = useState<string | null>(null);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    if (typeof window === "undefined") {
+      return "dark";
+    }
+
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+    return stored === "light" ? "light" : "dark";
+  });
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = themeMode;
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  }, [themeMode]);
 
   useEffect(() => {
     if (!hasPreloadApi) {
@@ -69,6 +88,18 @@ export function App() {
       void loadProjectWorkspace(selectedProjectId);
     }
   }, [loadProjectWorkspace, selectedProjectId, workspaces]);
+
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      clearError();
+    }, 3200);
+
+    return () => window.clearTimeout(timer);
+  }, [clearError, error]);
 
   const selectedWorkspace = selectedProjectId ? workspaces[selectedProjectId] : undefined;
   const selectedProject =
@@ -146,183 +177,185 @@ export function App() {
   }
 
   return (
-    <div className={`app-shell ${sidebarCollapsed ? "app-shell--collapsed" : ""}`}>
-      <aside className={`sidebar ${sidebarCollapsed ? "sidebar--collapsed" : ""}`}>
-        <div className="sidebar__top">
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setSidebarCollapsed((value) => !value)}
-            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {sidebarCollapsed ? ">" : "<"}
-          </button>
-          {!sidebarCollapsed ? (
-            <div className="sidebar__controls">
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() => setModalState({ mode: "create" })}
-              >
-                New project
-              </button>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="project-list">
-          {projects.length === 0 ? (
-            <div className="sidebar-empty-card">
-              {!sidebarCollapsed ? (
-                <>
-                  <strong>No projects saved</strong>
-                  <p>Create your first project to start opening tabs.</p>
-                </>
-              ) : (
-                <strong>0</strong>
-              )}
-            </div>
-          ) : null}
-
-          {projects.map((project) => {
-            const isActive = project.id === selectedProjectId;
-            return (
-              <button
-                key={project.id}
-                type="button"
-                className={`project-card ${isActive ? "project-card--active" : ""} ${sidebarCollapsed ? "project-card--collapsed" : ""}`}
-                onClick={() => selectProject(project.id)}
-                title={sidebarCollapsed ? project.name : undefined}
-              >
-                {sidebarCollapsed ? (
-                  <span className="project-card__mono">
-                    {project.name.trim().charAt(0).toUpperCase() || "?"}
-                  </span>
-                ) : (
-                  <>
-                    <span className="project-card__name">{project.name}</span>
-                    <span className="project-card__path">
-                      {project.rootPath ? `Default path: ${project.rootPath}` : "No default path"}
-                    </span>
-                    <span className="project-card__meta">
-                      {shellProfiles.find((profile) => profile.id === project.shellProfileId)?.label ??
-                        project.shellProfileId}
-                    </span>
-                    <span className="project-card__actions">
-                      <span
-                        className="link-button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setModalState({ mode: "edit", project });
-                        }}
-                      >
-                        Edit
-                      </span>
-                      <span
-                        className="link-button danger"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (window.confirm(`Delete project "${project.name}"?`)) {
-                            void deleteProject(project.id);
-                          }
-                        }}
-                      >
-                        Delete
-                      </span>
-                    </span>
-                  </>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </aside>
-
-      <main className="workspace">
-        {error ? <div className="banner banner--error">{error}</div> : null}
-
-        {!bootstrapped && loading ? (
-          <div className="empty-state">
-            <h2>Loading workspace</h2>
-          </div>
-        ) : null}
-
-        {bootstrapped && projects.length === 0 ? (
-          <div className="empty-state">
-            <h2>No projects yet</h2>
-            <p>Create a project to start restoring and grouping terminal tabs.</p>
-            <ProjectBootstrapPanel
-              shellProfiles={shellProfiles}
-              onSubmit={async (input) => {
-                await createProject(input);
-              }}
-            />
+    <>
+      <div className={`app-shell ${sidebarCollapsed ? "app-shell--collapsed" : ""}`}>
+        <aside className={`sidebar ${sidebarCollapsed ? "sidebar--collapsed" : ""}`}>
+          <div className="sidebar__top">
             <button
               type="button"
-              className="ghost-button"
-              onClick={() => setModalState({ mode: "create" })}
+              className="icon-button"
+              onClick={() => setSidebarCollapsed((value) => !value)}
+              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
             >
-              Open full project form
+              {sidebarCollapsed ? ">" : "<"}
             </button>
-          </div>
-        ) : null}
-
-        {selectedProject && selectedWorkspace ? (
-          <>
-            <header className="workspace__header">
-              <div>
-                <h2>{selectedProject.name}</h2>
-                <p className="workspace__subtext">
-                  {selectedProject.rootPath
-                    ? `Default path for new tabs: ${selectedProject.rootPath}`
-                    : "No default path configured for new tabs"}
-                </p>
-              </div>
-              <div className="workspace__header-actions">
-                <button
-                  type="button"
-                  className="ghost-button"
-                  onClick={() => setModalState({ mode: "edit", project: selectedProject })}
-                >
-                  Edit project
-                </button>
+            {!sidebarCollapsed ? (
+              <div className="sidebar__controls">
                 <button
                   type="button"
                   className="primary-button"
-                  onClick={() => void createTab({ projectId: selectedProject.id })}
+                  onClick={() => setModalState({ mode: "create" })}
                 >
-                  New tab
+                  New project
                 </button>
               </div>
-            </header>
+            ) : null}
+          </div>
 
-            <div className="tab-strip">
-              {selectedWorkspace.tabs.map((tab) => (
+          <div className="project-list">
+            {projects.length === 0 ? (
+              <div className="sidebar-empty-card">
+                {!sidebarCollapsed ? (
+                  <>
+                    <strong>No projects saved</strong>
+                    <p>Create your first project to start opening tabs.</p>
+                  </>
+                ) : (
+                  <strong>0</strong>
+                )}
+              </div>
+            ) : null}
+
+            {projects.map((project) => {
+              const isActive = project.id === selectedProjectId;
+              return (
                 <button
-                  key={tab.id}
+                  key={project.id}
                   type="button"
-                  className={`tab-chip ${activeTab?.id === tab.id ? "tab-chip--active" : ""}`}
-                  onClick={() => setSelectedTab(selectedWorkspace.project.id, tab.id)}
+                  className={`project-card ${isActive ? "project-card--active" : ""} ${sidebarCollapsed ? "project-card--collapsed" : ""}`}
+                  onClick={() => selectProject(project.id)}
+                  title={sidebarCollapsed ? project.name : undefined}
                 >
-                  <span>{tab.title}</span>
-                  <span
-                    className="tab-chip__close"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void closeTab(tab.id);
-                    }}
-                  >
-                    x
-                  </span>
+                  {sidebarCollapsed ? (
+                    <span className="project-card__mono">
+                      {project.name.trim().charAt(0).toUpperCase() || "?"}
+                    </span>
+                  ) : (
+                    <>
+                      <span className="project-card__name">{project.name}</span>
+                      <span className="project-card__path">
+                        {project.rootPath
+                          ? `Default path: ${project.rootPath}`
+                          : "No default path"}
+                      </span>
+                      <span className="project-card__meta">
+                        {shellProfiles.find((profile) => profile.id === project.shellProfileId)
+                          ?.label ?? project.shellProfileId}
+                      </span>
+                      <span className="project-card__actions">
+                        <span
+                          className="link-button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setModalState({ mode: "edit", project });
+                          }}
+                        >
+                          Edit
+                        </span>
+                        <span
+                          className="link-button danger"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (window.confirm(`Delete project "${project.name}"?`)) {
+                              void deleteProject(project.id);
+                            }
+                          }}
+                        >
+                          Delete
+                        </span>
+                      </span>
+                    </>
+                  )}
                 </button>
-              ))}
-            </div>
+              );
+            })}
+          </div>
 
-            {activeTab ? <TerminalPane project={selectedProject} tab={activeTab} /> : null}
-          </>
-        ) : null}
-      </main>
+          <div className="sidebar__bottom">
+            <button
+              type="button"
+              className="ghost-button sidebar__settings-button"
+              onClick={() => setSettingsOpen(true)}
+              title="Settings"
+            >
+              {sidebarCollapsed ? "S" : "Settings"}
+            </button>
+          </div>
+        </aside>
+
+        <main className="workspace">
+          {!bootstrapped && loading ? (
+            <div className="empty-state">
+              <h2>Loading workspace</h2>
+            </div>
+          ) : null}
+
+          {bootstrapped && projects.length === 0 ? (
+            <div className="empty-state">
+              <h2>No projects yet</h2>
+              <p>Create a project to start restoring and grouping terminal tabs.</p>
+              <ProjectBootstrapPanel
+                shellProfiles={shellProfiles}
+                onSubmit={async (input) => {
+                  await createProject(input);
+                }}
+              />
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => setModalState({ mode: "create" })}
+              >
+                Open full project form
+              </button>
+            </div>
+          ) : null}
+
+          {selectedProject && selectedWorkspace ? (
+            <>
+              <div className="tab-strip">
+                {selectedWorkspace.tabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={`tab-chip ${activeTab?.id === tab.id ? "tab-chip--active" : ""}`}
+                    onClick={() => setSelectedTab(selectedWorkspace.project.id, tab.id)}
+                  >
+                    <span>{tab.title}</span>
+                    <span
+                      className="tab-chip__close"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void closeTab(tab.id);
+                      }}
+                    >
+                      x
+                    </span>
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="tab-chip tab-chip--action"
+                  onClick={() => void createTab({ projectId: selectedProject.id })}
+                  title="New tab"
+                >
+                  +
+                </button>
+              </div>
+
+              {activeTab ? (
+                <TerminalPane
+                  project={selectedProject}
+                  tab={activeTab}
+                  themeMode={themeMode}
+                />
+              ) : null}
+            </>
+          ) : null}
+        </main>
+      </div>
+
+      {error ? <FloatingError message={error} /> : null}
 
       {modalState ? (
         <ProjectModal
@@ -330,6 +363,14 @@ export function App() {
           initialProject={modalState.mode === "edit" ? modalState.project : null}
           onClose={() => setModalState(null)}
           onSubmit={handleProjectSubmit}
+        />
+      ) : null}
+
+      {settingsOpen ? (
+        <SettingsModal
+          themeMode={themeMode}
+          onClose={() => setSettingsOpen(false)}
+          onThemeChange={setThemeMode}
         />
       ) : null}
 
@@ -355,6 +396,55 @@ export function App() {
           }}
         />
       ) : null}
+    </>
+  );
+}
+
+interface FloatingErrorProps {
+  message: string;
+}
+
+function FloatingError({ message }: FloatingErrorProps) {
+  return <div className="floating-error">{message}</div>;
+}
+
+interface SettingsModalProps {
+  themeMode: ThemeMode;
+  onClose(): void;
+  onThemeChange(theme: ThemeMode): void;
+}
+
+function SettingsModal({
+  themeMode,
+  onClose,
+  onThemeChange,
+}: SettingsModalProps) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(event) => event.stopPropagation()}>
+        <h3>Settings</h3>
+        <div className="theme-toggle">
+          <button
+            type="button"
+            className={`ghost-button ${themeMode === "dark" ? "theme-toggle__active" : ""}`}
+            onClick={() => onThemeChange("dark")}
+          >
+            Dark
+          </button>
+          <button
+            type="button"
+            className={`ghost-button ${themeMode === "light" ? "theme-toggle__active" : ""}`}
+            onClick={() => onThemeChange("light")}
+          >
+            Light
+          </button>
+        </div>
+        <div className="modal__actions">
+          <button type="button" className="ghost-button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -419,6 +509,43 @@ function ProjectBootstrapPanel({
       >
         Create first project
       </button>
+    </div>
+  );
+}
+
+interface DirectoryFieldProps {
+  value: string;
+  onChange(value: string): void;
+  placeholder?: string;
+}
+
+function DirectoryField({ value, onChange, placeholder }: DirectoryFieldProps) {
+  return (
+    <div className="directory-field">
+      <input value={value} placeholder={placeholder} readOnly />
+      <button
+        type="button"
+        className="ghost-button"
+        onClick={async () => {
+          const selected = await window.termbag.pickDirectory(value);
+          if (selected) {
+            onChange(selected);
+          }
+        }}
+      >
+        Browse
+      </button>
+      {value ? (
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Clear directory"
+          title="Clear directory"
+          onClick={() => onChange("")}
+        >
+          x
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -498,43 +625,6 @@ function ProjectModal({
           </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-interface DirectoryFieldProps {
-  value: string;
-  onChange(value: string): void;
-  placeholder?: string;
-}
-
-function DirectoryField({ value, onChange, placeholder }: DirectoryFieldProps) {
-  return (
-    <div className="directory-field">
-      <input value={value} placeholder={placeholder} readOnly />
-      <button
-        type="button"
-        className="ghost-button"
-        onClick={async () => {
-          const selected = await window.termbag.pickDirectory(value);
-          if (selected) {
-            onChange(selected);
-          }
-        }}
-      >
-        Browse
-      </button>
-      {value ? (
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Clear directory"
-          title="Clear directory"
-          onClick={() => onChange("")}
-        >
-          x
-        </button>
-      ) : null}
     </div>
   );
 }
