@@ -7,6 +7,7 @@ import type {
   CreateProjectInput,
   CreateTabInput,
   HistoryQuery,
+  RenameTabInput,
   RecallHistoryInput,
   ResizeTabInput,
   UpdateProjectInput,
@@ -20,6 +21,7 @@ interface AppServiceContract {
   updateProject(input: UpdateProjectInput): unknown;
   deleteProject(projectId: string): unknown;
   createTab(input: CreateTabInput): unknown;
+  renameTab(input: RenameTabInput): unknown;
   closeTab(tabId: string): unknown;
   activateTab(input: ActivateTabInput): unknown;
   resizeTab(tabId: string, cols: number, rows: number): void;
@@ -100,6 +102,9 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle(IPC_CHANNELS.createTab, (_event, input: CreateTabInput) =>
     appService!.createTab(input),
+  );
+  ipcMain.handle(IPC_CHANNELS.renameTab, (_event, input: RenameTabInput) =>
+    appService!.renameTab(input),
   );
   ipcMain.handle(IPC_CHANNELS.closeTab, (_event, tabId: string) =>
     appService!.closeTab(tabId),

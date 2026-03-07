@@ -9,6 +9,7 @@ import type {
   HistoryQuery,
   HydratedTabSession,
   ProjectWorkspace,
+  RenameTabInput,
   RecallHistoryInput,
   RecallHistoryResult,
   ResizeTabInput,
@@ -31,6 +32,8 @@ const api: TermBagApi = {
     ipcRenderer.invoke(IPC_CHANNELS.deleteProject, projectId) as Promise<BootstrapData>,
   createTab: (input: CreateTabInput) =>
     ipcRenderer.invoke(IPC_CHANNELS.createTab, input) as Promise<ProjectWorkspace>,
+  renameTab: (input: RenameTabInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.renameTab, input) as Promise<ProjectWorkspace>,
   closeTab: (tabId) =>
     ipcRenderer.invoke(IPC_CHANNELS.closeTab, tabId) as Promise<ProjectWorkspace>,
   activateTab: (input: ActivateTabInput) =>

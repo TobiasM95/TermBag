@@ -6,6 +6,7 @@ import type {
   HistoryEntry,
   Project,
   ProjectWorkspace,
+  RenameTabInput,
   ShellProfileAvailability,
   TabRuntimeSummary,
   TerminalEvent,
@@ -32,6 +33,7 @@ interface AppState {
   updateProject(input: UpdateProjectInput): Promise<void>;
   deleteProject(projectId: string): Promise<void>;
   createTab(input: CreateTabInput): Promise<void>;
+  renameTab(input: RenameTabInput): Promise<void>;
   closeTab(tabId: string): Promise<void>;
   loadHistory(projectId: string): Promise<void>;
   applyTerminalEvent(event: TerminalEvent): void;
@@ -229,6 +231,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         loading: false,
         error: error instanceof Error ? error.message : "Failed to create tab.",
+      });
+    }
+  },
+
+  async renameTab(input: RenameTabInput) {
+    set({ loading: true, error: null });
+    try {
+      const workspace = await window.termbag.renameTab(input);
+      set((state) => ({
+        loading: false,
+        workspaces: mergeWorkspace(state.workspaces, workspace),
+        projects: upsertProject(state.projects, workspace.project),
+      }));
+    } catch (error) {
+      set({
+        loading: false,
+        error: error instanceof Error ? error.message : "Failed to rename tab.",
       });
     }
   },

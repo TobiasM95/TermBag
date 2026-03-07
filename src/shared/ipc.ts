@@ -6,6 +6,7 @@ export const IPC_CHANNELS = {
   updateProject: "projects:update",
   deleteProject: "projects:delete",
   createTab: "tabs:create",
+  renameTab: "tabs:rename",
   closeTab: "tabs:close",
   activateTab: "tabs:activate",
   resizeTab: "tabs:resize",

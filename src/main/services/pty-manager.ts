@@ -342,10 +342,11 @@ export class PtyManager {
     const updated = this.database.updateTab({
       ...latest,
       lastKnownCwd: cwd,
-      title: deriveTabTitle(cwd, shellProfile.label),
+      title: latest.customTitle ?? deriveTabTitle(cwd, shellProfile.label),
     });
     tab.lastKnownCwd = updated.lastKnownCwd;
     tab.title = updated.title;
+    tab.customTitle = updated.customTitle;
   }
 
   private scheduleSnapshotFlush(runtime: RuntimeTab): void {

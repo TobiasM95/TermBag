@@ -67,6 +67,7 @@ const MIGRATIONS = [
         project_id TEXT NOT NULL,
         shell_profile_id TEXT NOT NULL,
         title TEXT NOT NULL,
+        custom_title TEXT,
         restore_order INTEGER NOT NULL,
         last_known_cwd TEXT,
         was_open INTEGER NOT NULL DEFAULT 1,
@@ -145,6 +146,7 @@ function mapTab(row: Record<string, unknown>): SavedTerminalTab {
     projectId: String(row.project_id),
     shellProfileId: String(row.shell_profile_id),
     title: String(row.title),
+    customTitle: row.custom_title ? String(row.custom_title) : null,
     restoreOrder: Number(row.restore_order),
     lastKnownCwd: row.last_known_cwd ? String(row.last_known_cwd) : null,
     wasOpen: Boolean(row.was_open),
@@ -232,6 +234,23 @@ export class DatabaseService {
         this.db
           .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
           .run("002_project_default_shell", nowIso());
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
+
+    if (!existing.has("003_tab_custom_title")) {
+      this.db.exec("BEGIN");
+      try {
+        const tabColumns = new Set(this.getTableColumns("saved_terminal_tabs"));
+        if (!tabColumns.has("custom_title")) {
+          this.db.exec("ALTER TABLE saved_terminal_tabs ADD COLUMN custom_title TEXT");
+        }
+        this.db
+          .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
+          .run("003_tab_custom_title", nowIso());
         this.db.exec("COMMIT");
       } catch (error) {
         this.db.exec("ROLLBACK");
@@ -367,7 +386,7 @@ export class DatabaseService {
     const rows = this.db
       .prepare(
         `SELECT
-           id, project_id, shell_profile_id, title, restore_order,
+           id, project_id, shell_profile_id, title, custom_title, restore_order,
            last_known_cwd, was_open, last_activated_at, created_at, updated_at
          FROM saved_terminal_tabs
          WHERE project_id = ?
@@ -381,7 +400,7 @@ export class DatabaseService {
     const row = this.db
       .prepare(
         `SELECT
-           id, project_id, shell_profile_id, title, restore_order,
+           id, project_id, shell_profile_id, title, custom_title, restore_order,
            last_known_cwd, was_open, last_activated_at, created_at, updated_at
          FROM saved_terminal_tabs
          WHERE id = ?`,
@@ -411,15 +430,16 @@ export class DatabaseService {
     this.db
       .prepare(
         `INSERT INTO saved_terminal_tabs (
-          id, project_id, shell_profile_id, title, restore_order,
+          id, project_id, shell_profile_id, title, custom_title, restore_order,
           last_known_cwd, was_open, last_activated_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
       )
       .run(
         params.id,
         params.projectId,
         params.shellProfileId,
         params.title,
+        null,
         params.restoreOrder,
         params.lastKnownCwd,
         timestamp,
@@ -434,13 +454,14 @@ export class DatabaseService {
     this.db
       .prepare(
         `UPDATE saved_terminal_tabs
-         SET shell_profile_id = ?, title = ?, restore_order = ?, last_known_cwd = ?,
+         SET shell_profile_id = ?, title = ?, custom_title = ?, restore_order = ?, last_known_cwd = ?,
              was_open = ?, last_activated_at = ?, updated_at = ?
          WHERE id = ?`,
       )
       .run(
         tab.shellProfileId,
         tab.title,
+        tab.customTitle,
         tab.restoreOrder,
         tab.lastKnownCwd,
         tab.wasOpen ? 1 : 0,

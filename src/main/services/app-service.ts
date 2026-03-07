@@ -10,6 +10,7 @@ import type {
   HydratedTabSession,
   Project,
   ProjectWorkspace,
+  RenameTabInput,
   RecallHistoryResult,
   ShellProfile,
   ShellProfileAvailability,
@@ -118,6 +119,22 @@ export class AppService {
       lastKnownCwd: cwd,
     });
     return this.getProjectWorkspace(project.id);
+  }
+
+  renameTab(input: RenameTabInput): ProjectWorkspace {
+    const tab = this.requireTab(input.tabId);
+    const shellProfile = this.requireShellProfile(tab.shellProfileId);
+    const nextCustomTitle = input.title.trim();
+
+    this.database.updateTab({
+      ...tab,
+      title:
+        nextCustomTitle ||
+        deriveTabTitle(tab.lastKnownCwd, shellProfile.label),
+      customTitle: nextCustomTitle || null,
+    });
+
+    return this.getProjectWorkspace(tab.projectId);
   }
 
   closeTab(tabId: string): ProjectWorkspace {

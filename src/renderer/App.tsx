@@ -14,9 +14,22 @@ type ModalState =
   | { mode: "edit"; project: Project }
   | null;
 
+type TabContextMenuState = {
+  tabId: string;
+  x: number;
+  y: number;
+} | null;
+
+type RenameTabState = {
+  tabId: string;
+  title: string;
+} | null;
+
 type ThemeMode = "dark" | "light";
+type TabAlignment = "left" | "center" | "right";
 
 const THEME_STORAGE_KEY = "termbag-theme-mode";
+const TAB_ALIGNMENT_STORAGE_KEY = "termbag-tab-alignment";
 
 function getShellLabel(shellProfileId: string): string {
   switch (shellProfileId) {
@@ -54,6 +67,7 @@ export function App() {
     updateProject,
     deleteProject,
     createTab,
+    renameTab,
     closeTab,
     loadHistory,
     applyTerminalEvent,
@@ -64,6 +78,8 @@ export function App() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shellPickerOpen, setShellPickerOpen] = useState(false);
+  const [tabContextMenu, setTabContextMenu] = useState<TabContextMenuState>(null);
+  const [renameTabState, setRenameTabState] = useState<RenameTabState>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [recallNotice, setRecallNotice] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
@@ -74,11 +90,23 @@ export function App() {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
     return stored === "light" ? "light" : "dark";
   });
+  const [tabAlignment, setTabAlignment] = useState<TabAlignment>(() => {
+    if (typeof window === "undefined") {
+      return "left";
+    }
+
+    const stored = window.localStorage.getItem(TAB_ALIGNMENT_STORAGE_KEY);
+    return stored === "center" || stored === "right" ? stored : "left";
+  });
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
     window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
   }, [themeMode]);
+
+  useEffect(() => {
+    window.localStorage.setItem(TAB_ALIGNMENT_STORAGE_KEY, tabAlignment);
+  }, [tabAlignment]);
 
   useEffect(() => {
     if (!hasPreloadApi) {
@@ -143,6 +171,10 @@ export function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setTabContextMenu(null);
+      }
+
       if (!event.ctrlKey || !event.shiftKey || event.key.toLowerCase() !== "r") {
         return;
       }
@@ -329,14 +361,24 @@ export function App() {
           ) : null}
 
           {selectedProject && selectedWorkspace ? (
-            <>
-              <div className="tab-strip">
+            <div className="workspace-session">
+              <div className={`tab-strip tab-strip--${tabAlignment}`}>
                 {selectedWorkspace.tabs.map((tab) => (
                   <button
                     key={tab.id}
                     type="button"
                     className={`tab-chip ${activeTab?.id === tab.id ? "tab-chip--active" : ""}`}
                     onClick={() => setSelectedTab(selectedWorkspace.project.id, tab.id)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setSelectedTab(selectedWorkspace.project.id, tab.id);
+                      setTabContextMenu({
+                        tabId: tab.id,
+                        x: event.clientX,
+                        y: event.clientY,
+                      });
+                    }}
                   >
                     <span>{tab.title}</span>
                     <span
@@ -375,7 +417,7 @@ export function App() {
                   themeMode={themeMode}
                 />
               ) : null}
-            </>
+            </div>
           ) : null}
         </main>
       </div>
@@ -394,8 +436,10 @@ export function App() {
       {settingsOpen ? (
         <SettingsModal
           themeMode={themeMode}
+          tabAlignment={tabAlignment}
           onClose={() => setSettingsOpen(false)}
           onThemeChange={setThemeMode}
+          onTabAlignmentChange={setTabAlignment}
         />
       ) : null}
 
@@ -410,6 +454,52 @@ export function App() {
               shellProfileId,
             });
             setShellPickerOpen(false);
+          }}
+        />
+      ) : null}
+
+      {tabContextMenu ? (
+        <>
+          <div
+            className="tab-context-menu-backdrop"
+            onClick={() => setTabContextMenu(null)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              setTabContextMenu(null);
+            }}
+          />
+          <TabContextMenu
+            x={tabContextMenu.x}
+            y={tabContextMenu.y}
+            onRename={() => {
+              const tab = selectedWorkspace?.tabs.find(
+                (entry) => entry.id === tabContextMenu.tabId,
+              );
+              if (!tab) {
+                setTabContextMenu(null);
+                return;
+              }
+              setRenameTabState({
+                tabId: tab.id,
+                title: tab.customTitle ?? tab.title,
+              });
+              setTabContextMenu(null);
+            }}
+            onClose={() => setTabContextMenu(null)}
+          />
+        </>
+      ) : null}
+
+      {renameTabState ? (
+        <RenameTabModal
+          initialTitle={renameTabState.title}
+          onClose={() => setRenameTabState(null)}
+          onSubmit={async (title) => {
+            await renameTab({
+              tabId: renameTabState.tabId,
+              title,
+            });
+            setRenameTabState(null);
           }}
         />
       ) : null}
@@ -539,8 +629,10 @@ function FloatingError({ message }: FloatingErrorProps) {
 
 interface SettingsModalProps {
   themeMode: ThemeMode;
+  tabAlignment: TabAlignment;
   onClose(): void;
   onThemeChange(theme: ThemeMode): void;
+  onTabAlignmentChange(alignment: TabAlignment): void;
 }
 
 interface ShellPickerModalProps {
@@ -597,8 +689,10 @@ function ShellPickerModal({
 
 function SettingsModal({
   themeMode,
+  tabAlignment,
   onClose,
   onThemeChange,
+  onTabAlignmentChange,
 }: SettingsModalProps) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -620,9 +714,107 @@ function SettingsModal({
             Light
           </button>
         </div>
+        <div className="settings-group">
+          <span className="settings-group__label">Tab alignment</span>
+          <div className="theme-toggle">
+            <button
+              type="button"
+              className={`ghost-button ${tabAlignment === "left" ? "theme-toggle__active" : ""}`}
+              onClick={() => onTabAlignmentChange("left")}
+            >
+              Left
+            </button>
+            <button
+              type="button"
+              className={`ghost-button ${tabAlignment === "center" ? "theme-toggle__active" : ""}`}
+              onClick={() => onTabAlignmentChange("center")}
+            >
+              Center
+            </button>
+            <button
+              type="button"
+              className={`ghost-button ${tabAlignment === "right" ? "theme-toggle__active" : ""}`}
+              onClick={() => onTabAlignmentChange("right")}
+            >
+              Right
+            </button>
+          </div>
+        </div>
         <div className="modal__actions">
           <button type="button" className="ghost-button" onClick={onClose}>
             Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface TabContextMenuProps {
+  x: number;
+  y: number;
+  onRename(): void;
+  onClose(): void;
+}
+
+function TabContextMenu({ x, y, onRename, onClose }: TabContextMenuProps) {
+  return (
+    <div
+      className="tab-context-menu"
+      style={{ left: x, top: y }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onContextMenu={(event) => event.preventDefault()}
+    >
+      <button
+        type="button"
+        className="tab-context-menu__item"
+        onClick={() => {
+          onRename();
+          onClose();
+        }}
+      >
+        Rename
+      </button>
+    </div>
+  );
+}
+
+interface RenameTabModalProps {
+  initialTitle: string;
+  onClose(): void;
+  onSubmit(title: string): Promise<void>;
+}
+
+function RenameTabModal({
+  initialTitle,
+  onClose,
+  onSubmit,
+}: RenameTabModalProps) {
+  const [title, setTitle] = useState(initialTitle);
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal modal--compact" onClick={(event) => event.stopPropagation()}>
+        <h3>Rename tab</h3>
+        <label>
+          <span>Title</span>
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="Leave empty to use the automatic title"
+          />
+        </label>
+        <div className="modal__actions">
+          <button type="button" className="ghost-button" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => void onSubmit(title)}
+          >
+            Save
           </button>
         </div>
       </div>

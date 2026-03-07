@@ -28,6 +28,7 @@ export interface SavedTerminalTab {
   projectId: string;
   shellProfileId: string;
   title: string;
+  customTitle: string | null;
   restoreOrder: number;
   lastKnownCwd: string | null;
   wasOpen: boolean;
@@ -107,6 +108,11 @@ export interface CreateTabInput {
   shellProfileId?: string;
 }
 
+export interface RenameTabInput {
+  tabId: string;
+  title: string;
+}
+
 export interface ActivateTabInput {
   tabId: string;
   cols: number;
@@ -166,6 +172,7 @@ export interface TermBagApi {
   updateProject(input: UpdateProjectInput): Promise<ProjectWorkspace>;
   deleteProject(projectId: string): Promise<BootstrapData>;
   createTab(input: CreateTabInput): Promise<ProjectWorkspace>;
+  renameTab(input: RenameTabInput): Promise<ProjectWorkspace>;
   closeTab(tabId: string): Promise<ProjectWorkspace>;
   activateTab(input: ActivateTabInput): Promise<HydratedTabSession>;
   resizeTab(input: ResizeTabInput): Promise<void>;
