@@ -104,5 +104,18 @@ export function sanitizeSnapshotForDisplay(serializedBuffer: string): string {
     normalizedLines.pop();
   }
 
-  return normalizedLines.join("\n");
+  const compactedLines: string[] = [];
+  let previousWasBlank = false;
+
+  for (const line of normalizedLines) {
+    const isBlank = line.trim() === "";
+    if (isBlank && previousWasBlank) {
+      continue;
+    }
+
+    compactedLines.push(line);
+    previousWasBlank = isBlank;
+  }
+
+  return compactedLines.join("\n");
 }

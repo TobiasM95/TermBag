@@ -27,6 +27,12 @@ describe("snapshot retention", () => {
 
     expect(text).toBe("C:\\Users\\tobim\\Documents>");
   });
+
+  it("compacts long runs of blank lines in restored preview rendering", () => {
+    const text = sanitizeSnapshotForDisplay("line-1\n\n\n\nline-2\n\n\nline-3");
+
+    expect(text).toBe("line-1\n\nline-2\n\nline-3");
+  });
 });
 
 describe("PowerShell integration parsing", () => {
