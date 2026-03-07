@@ -520,7 +520,7 @@ html[data-scrollbars="aggressive"] .terminal-host .xterm-viewport:hover::-webkit
 
 .tab-strip {
   display: flex;
-  gap: 4px;
+  gap: 0;
   overflow: auto;
   align-items: stretch;
   padding: 0 0 0 0;
@@ -552,6 +552,7 @@ html[data-scrollbars="aggressive"] .terminal-host .xterm-viewport:hover::-webkit
 }
 
 .tab-chip {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -567,7 +568,12 @@ html[data-scrollbars="aggressive"] .terminal-host .xterm-viewport:hover::-webkit
   -webkit-app-region: no-drag;
 }
 
+.tab-chip + .tab-chip {
+  margin-left: -1px;
+}
+
 .tab-chip--active {
+  z-index: 1;
   border-color: var(--accent-strong);
   background: var(--accent-soft);
 }
