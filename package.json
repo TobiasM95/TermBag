@@ -2,6 +2,7 @@
   "name": "termbag",
   "version": "0.1.0",
   "private": true,
+  "author": "TobiasM95",
   "description": "Windows-first terminal workspace with lazy restore and local persistence.",
   "main": "dist-electron/main/index.js",
   "type": "module",
@@ -17,7 +18,54 @@
     "build:electron": "tsc -p tsconfig.main.json && tsc -p tsconfig.preload.json",
     "build:renderer": "vite build",
     "preview": "cross-env NODE_ENV=production electron dist-electron/main/index.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "package:win": "pnpm build && electron-builder --win nsis portable && node scripts/patch-windows-artifacts.mjs",
+    "package:win:dir": "pnpm build && electron-builder --win dir && node scripts/patch-windows-artifacts.mjs"
+  },
+  "build": {
+    "appId": "com.tobiasm95.termbag",
+    "productName": "TermBag",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "build/icon.ico",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "TermBag"
+    },
+    "portable": {
+      "artifactName": "TermBag.exe"
+    }
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -33,7 +81,6 @@
     "@xterm/headless": "^5.5.0",
     "@xterm/xterm": "^5.5.0",
     "better-sqlite3": "^12.6.2",
-    "electron": "^40.8.0",
     "node-pty": "^1.1.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
@@ -47,6 +94,10 @@
     "@vitejs/plugin-react": "^5.1.4",
     "concurrently": "^9.2.1",
     "cross-env": "^7.0.3",
+    "electron": "^40.8.0",
+    "electron-builder": "^26.8.1",
+    "png-to-ico": "^3.0.1",
+    "rcedit": "^5.0.2",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
     "vitest": "^4.0.18",

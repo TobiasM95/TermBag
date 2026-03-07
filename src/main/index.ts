@@ -44,10 +44,13 @@ let appService: AppServiceContract | null = null;
 let startupComplete = false;
 let fatalErrorShown = false;
 let quitting = false;
+const APP_ID = "com.tobiasm95.termbag";
 const CURRENT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(CURRENT_DIR, "../..");
 const TITLEBAR_HEIGHT = 32;
-const APP_ICON_PATH = path.join(REPO_ROOT, "build", "logo-tight.png");
+const APP_ICON_PATH = path.join(REPO_ROOT, "build", "icon.ico");
+
+app.setAppUserModelId(APP_ID);
 
 function getPreloadPath(): string {
   return path.resolve(CURRENT_DIR, "../preload/index.js");

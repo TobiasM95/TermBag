@@ -198,6 +198,18 @@ Run tests:
 pnpm test
 ```
 
+Build Windows packages:
+
+```powershell
+pnpm package:win
+```
+
+Create an unpacked Windows build for quick validation:
+
+```powershell
+pnpm package:win:dir
+```
+
 ## Native Module Notes
 
 If you see an error like:
@@ -220,6 +232,22 @@ Current icon assets live in `build/`:
 - `build/icon.ico` for Windows packaging
 
 The Electron window currently uses the PNG icon at runtime.
+
+## Windows Packaging
+
+Windows packaging is configured with `electron-builder`.
+
+Current outputs go to `release/` and include:
+
+- NSIS installer
+- portable Windows build
+- unpacked app directory via `pnpm package:win:dir`
+
+Current Windows packaging settings:
+
+- product name: `TermBag`
+- x64 targets
+- Windows icon: `build/icon.ico`
 
 ## Manual Smoke Test
 
