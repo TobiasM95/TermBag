@@ -4,7 +4,7 @@ export interface Project {
   id: string;
   name: string;
   rootPath: string;
-  shellProfileId: string;
+  defaultShellProfileId: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -92,14 +92,14 @@ export interface ProjectWorkspace {
 export interface CreateProjectInput {
   name: string;
   rootPath: string;
-  shellProfileId?: string;
+  defaultShellProfileId?: string;
 }
 
 export interface UpdateProjectInput {
   id: string;
   name: string;
   rootPath: string;
-  shellProfileId: string;
+  defaultShellProfileId: string;
 }
 
 export interface CreateTabInput {

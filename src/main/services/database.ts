@@ -14,7 +14,7 @@ interface CreateProjectParams {
   id: string;
   name: string;
   rootPath: string;
-  shellProfileId: string;
+  defaultShellProfileId: string;
 }
 
 interface CreateTabParams {
@@ -56,10 +56,10 @@ const MIGRATIONS = [
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         root_path TEXT NOT NULL,
-        shell_profile_id TEXT NOT NULL,
+        default_shell_profile_id TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        FOREIGN KEY(shell_profile_id) REFERENCES shell_profiles(id)
+        FOREIGN KEY(default_shell_profile_id) REFERENCES shell_profiles(id)
       );
 
       CREATE TABLE IF NOT EXISTS saved_terminal_tabs (
@@ -121,7 +121,7 @@ function mapProject(row: Record<string, unknown>): Project {
     id: String(row.id),
     name: String(row.name),
     rootPath: String(row.root_path),
-    shellProfileId: String(row.shell_profile_id),
+    defaultShellProfileId: String(row.default_shell_profile_id),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -216,6 +216,35 @@ export class DatabaseService {
         throw error;
       }
     }
+
+    if (!existing.has("002_project_default_shell")) {
+      this.db.exec("BEGIN");
+      try {
+        const projectColumns = new Set(this.getTableColumns("projects"));
+        if (
+          projectColumns.has("shell_profile_id") &&
+          !projectColumns.has("default_shell_profile_id")
+        ) {
+          this.db.exec(
+            "ALTER TABLE projects RENAME COLUMN shell_profile_id TO default_shell_profile_id",
+          );
+        }
+        this.db
+          .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
+          .run("002_project_default_shell", nowIso());
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
+  }
+
+  private getTableColumns(tableName: string): string[] {
+    return this.db
+      .prepare(`PRAGMA table_info(${tableName})`)
+      .all()
+      .map((row: unknown) => String((row as { name: unknown }).name));
   }
 
   close(): void {
@@ -269,7 +298,7 @@ export class DatabaseService {
   listProjects(): Project[] {
     const rows = this.db
       .prepare(
-        `SELECT id, name, root_path, shell_profile_id, created_at, updated_at
+        `SELECT id, name, root_path, default_shell_profile_id, created_at, updated_at
          FROM projects
          ORDER BY updated_at DESC, created_at DESC`,
       )
@@ -280,7 +309,7 @@ export class DatabaseService {
   getProject(projectId: string): Project | null {
     const row = this.db
       .prepare(
-        `SELECT id, name, root_path, shell_profile_id, created_at, updated_at
+        `SELECT id, name, root_path, default_shell_profile_id, created_at, updated_at
          FROM projects
          WHERE id = ?`,
       )
@@ -293,14 +322,14 @@ export class DatabaseService {
     this.db
       .prepare(
         `INSERT INTO projects (
-          id, name, root_path, shell_profile_id, created_at, updated_at
+          id, name, root_path, default_shell_profile_id, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?)`,
       )
       .run(
         params.id,
         params.name,
         params.rootPath,
-        params.shellProfileId,
+        params.defaultShellProfileId,
         timestamp,
         timestamp,
       );
@@ -311,13 +340,13 @@ export class DatabaseService {
     this.db
       .prepare(
         `UPDATE projects
-         SET name = ?, root_path = ?, shell_profile_id = ?, updated_at = ?
+         SET name = ?, root_path = ?, default_shell_profile_id = ?, updated_at = ?
          WHERE id = ?`,
       )
       .run(
         project.name,
         project.rootPath,
-        project.shellProfileId,
+        project.defaultShellProfileId,
         nowIso(),
         project.id,
       );

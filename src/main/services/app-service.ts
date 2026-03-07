@@ -67,15 +67,16 @@ export class AppService {
 
   createProject(input: CreateProjectInput): ProjectWorkspace {
     const defaultProfileId =
-      input.shellProfileId && this.shellCatalog.isAvailable(input.shellProfileId)
-        ? input.shellProfileId
+      input.defaultShellProfileId &&
+      this.shellCatalog.isAvailable(input.defaultShellProfileId)
+        ? input.defaultShellProfileId
         : this.shellCatalog.resolveDefaultProfileId();
 
     const project = this.database.createProject({
       id: crypto.randomUUID(),
       name: input.name.trim(),
       rootPath: normalizeWindowsPath(input.rootPath),
-      shellProfileId: defaultProfileId,
+      defaultShellProfileId: defaultProfileId,
     });
 
     this.createInitialTab(project, defaultProfileId);
@@ -88,7 +89,7 @@ export class AppService {
       ...existing,
       name: input.name.trim(),
       rootPath: normalizeWindowsPath(input.rootPath),
-      shellProfileId: input.shellProfileId,
+      defaultShellProfileId: input.defaultShellProfileId,
     });
     return this.getProjectWorkspace(input.id);
   }
@@ -104,7 +105,7 @@ export class AppService {
 
   createTab(input: CreateTabInput): ProjectWorkspace {
     const project = this.requireProject(input.projectId);
-    const shellProfileId = input.shellProfileId ?? project.shellProfileId;
+    const shellProfileId = input.shellProfileId ?? project.defaultShellProfileId;
     const shellProfile = this.requireShellProfile(shellProfileId);
     const cwd = this.resolveProjectDefaultCwd(project);
 

@@ -63,6 +63,7 @@ export function App() {
   const [modalState, setModalState] = useState<ModalState>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shellPickerOpen, setShellPickerOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [recallNotice, setRecallNotice] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
@@ -247,15 +248,6 @@ export function App() {
                   ) : (
                     <>
                       <span className="project-card__top">
-                        <span
-                          className="project-card__shell"
-                          title={
-                            shellProfiles.find((profile) => profile.id === project.shellProfileId)
-                              ?.label ?? project.shellProfileId
-                          }
-                        >
-                          <ShellIcon shellProfileId={project.shellProfileId} />
-                        </span>
                         <span className="project-card__name" title={project.name}>
                           {project.name}
                         </span>
@@ -362,9 +354,17 @@ export function App() {
                   type="button"
                   className="tab-chip tab-chip--action"
                   onClick={() => void createTab({ projectId: selectedProject.id })}
-                  title="New tab"
+                  title="New tab with default shell"
                 >
                   +
+                </button>
+                <button
+                  type="button"
+                  className="tab-chip tab-chip--action"
+                  onClick={() => setShellPickerOpen(true)}
+                  title="New tab with selected shell"
+                >
+                  *
                 </button>
               </div>
 
@@ -396,6 +396,21 @@ export function App() {
           themeMode={themeMode}
           onClose={() => setSettingsOpen(false)}
           onThemeChange={setThemeMode}
+        />
+      ) : null}
+
+      {shellPickerOpen && selectedProject ? (
+        <ShellPickerModal
+          shellProfiles={shellProfiles}
+          defaultShellProfileId={selectedProject.defaultShellProfileId}
+          onClose={() => setShellPickerOpen(false)}
+          onSelect={async (shellProfileId) => {
+            await createTab({
+              projectId: selectedProject.id,
+              shellProfileId,
+            });
+            setShellPickerOpen(false);
+          }}
         />
       ) : null}
 
@@ -528,6 +543,58 @@ interface SettingsModalProps {
   onThemeChange(theme: ThemeMode): void;
 }
 
+interface ShellPickerModalProps {
+  shellProfiles: ShellProfileAvailability[];
+  defaultShellProfileId: string;
+  onClose(): void;
+  onSelect(shellProfileId: string): Promise<void>;
+}
+
+function ShellPickerModal({
+  shellProfiles,
+  defaultShellProfileId,
+  onClose,
+  onSelect,
+}: ShellPickerModalProps) {
+  const availableProfiles = shellProfiles.filter((profile) => profile.available);
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal shell-picker-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="history-header">
+          <div>
+            <h3>Choose shell</h3>
+            <p>Select a shell for the new tab. The project default is marked.</p>
+          </div>
+          <button type="button" className="ghost-button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="shell-picker-list">
+          {availableProfiles.map((profile) => (
+            <button
+              key={profile.id}
+              type="button"
+              className={`shell-picker-item ${profile.id === defaultShellProfileId ? "shell-picker-item--default" : ""}`}
+              onClick={() => void onSelect(profile.id)}
+            >
+              <span className="shell-picker-item__icon">
+                <ShellIcon shellProfileId={profile.id} />
+              </span>
+              <span className="shell-picker-item__content">
+                <strong>{profile.label}</strong>
+                <span>
+                  {profile.id === defaultShellProfileId ? "Project default shell" : profile.executable}
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsModal({
   themeMode,
   onClose,
@@ -574,7 +641,7 @@ function ProjectBootstrapPanel({
 }: ProjectBootstrapPanelProps) {
   const [name, setName] = useState("");
   const [rootPath, setRootPath] = useState("");
-  const [shellProfileId, setShellProfileId] = useState(
+  const [defaultShellProfileId, setDefaultShellProfileId] = useState(
     shellProfiles.find((profile) => profile.available)?.id ?? "cmd",
   );
 
@@ -597,10 +664,10 @@ function ProjectBootstrapPanel({
         />
       </label>
       <label>
-        <span>Shell profile</span>
+        <span>Default shell</span>
         <select
-          value={shellProfileId}
-          onChange={(event) => setShellProfileId(event.target.value)}
+          value={defaultShellProfileId}
+          onChange={(event) => setDefaultShellProfileId(event.target.value)}
         >
           {shellProfiles.map((profile) => (
             <option key={profile.id} value={profile.id} disabled={!profile.available}>
@@ -617,7 +684,7 @@ function ProjectBootstrapPanel({
           void onSubmit({
             name,
             rootPath,
-            shellProfileId,
+            defaultShellProfileId,
           })
         }
       >
@@ -679,8 +746,8 @@ function ProjectModal({
 }: ProjectModalProps) {
   const [name, setName] = useState(initialProject?.name ?? "");
   const [rootPath, setRootPath] = useState(initialProject?.rootPath ?? "");
-  const [shellProfileId, setShellProfileId] = useState(
-    initialProject?.shellProfileId ??
+  const [defaultShellProfileId, setDefaultShellProfileId] = useState(
+    initialProject?.defaultShellProfileId ??
       shellProfiles.find((profile) => profile.available)?.id ??
       "cmd",
   );
@@ -698,10 +765,10 @@ function ProjectModal({
           <DirectoryField value={rootPath} onChange={setRootPath} />
         </label>
         <label>
-          <span>Shell profile</span>
+          <span>Default shell</span>
           <select
-            value={shellProfileId}
-            onChange={(event) => setShellProfileId(event.target.value)}
+            value={defaultShellProfileId}
+            onChange={(event) => setDefaultShellProfileId(event.target.value)}
           >
             {shellProfiles.map((profile) => (
               <option key={profile.id} value={profile.id} disabled={!profile.available}>
@@ -725,12 +792,12 @@ function ProjectModal({
                       id: initialProject.id,
                       name,
                       rootPath,
-                      shellProfileId,
+                      defaultShellProfileId,
                     }
                   : {
                       name,
                       rootPath,
-                      shellProfileId,
+                      defaultShellProfileId,
                     },
               )
             }
