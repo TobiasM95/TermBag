@@ -822,11 +822,22 @@ html[data-theme="light"] .modal-backdrop {
   margin-top: 16px;
 }
 
+.settings-group--hotkeys {
+  padding-top: 4px;
+}
+
 .settings-group__label {
   display: block;
   margin-bottom: 8px;
   color: var(--text-dim);
   font-size: 12px;
+}
+
+.settings-note {
+  margin: 8px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .theme-toggle {

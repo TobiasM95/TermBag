@@ -29,12 +29,139 @@ type ThemeMode = "dark" | "light";
 type TabAlignment = "left" | "center" | "right";
 type ProjectSortMode = "created" | "alphabetical";
 type ScrollbarMode = "minimal" | "aggressive";
+type HotkeyModifier = "control" | "alt" | "meta";
 
 const THEME_STORAGE_KEY = "termbag-theme-mode";
 const TAB_ALIGNMENT_STORAGE_KEY = "termbag-tab-alignment";
 const PROJECT_SORT_STORAGE_KEY = "termbag-project-sort-mode";
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "termbag-sidebar-collapsed";
 const SCROLLBAR_MODE_STORAGE_KEY = "termbag-scrollbar-mode";
+const PROJECT_HOTKEY_MODIFIER_STORAGE_KEY = "termbag-project-hotkey-modifier";
+const TAB_HOTKEY_MODIFIER_STORAGE_KEY = "termbag-tab-hotkey-modifier";
+
+function detectMacPlatform(): boolean {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+
+  const platform =
+    navigator.userAgentData?.platform ?? navigator.platform ?? navigator.userAgent;
+  return /mac/i.test(platform);
+}
+
+function getSupportedHotkeyModifiers(isMacPlatform: boolean): HotkeyModifier[] {
+  return isMacPlatform ? ["meta", "control", "alt"] : ["control", "alt"];
+}
+
+function getDefaultProjectHotkeyModifier(isMacPlatform: boolean): HotkeyModifier {
+  return isMacPlatform ? "meta" : "control";
+}
+
+function getDefaultTabHotkeyModifier(isMacPlatform: boolean): HotkeyModifier {
+  return isMacPlatform ? "control" : "alt";
+}
+
+function getStoredHotkeyModifier(
+  storageKey: string,
+  supportedModifiers: HotkeyModifier[],
+  fallback: HotkeyModifier,
+): HotkeyModifier {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+
+  const stored = window.localStorage.getItem(storageKey);
+  return stored && supportedModifiers.includes(stored as HotkeyModifier)
+    ? (stored as HotkeyModifier)
+    : fallback;
+}
+
+function getModifierLabel(modifier: HotkeyModifier, isMacPlatform: boolean): string {
+  switch (modifier) {
+    case "meta":
+      return isMacPlatform ? "Command" : "Meta";
+    case "alt":
+      return isMacPlatform ? "Option" : "Alt";
+    case "control":
+    default:
+      return isMacPlatform ? "Control" : "Ctrl";
+  }
+}
+
+function getHotkeySlot(event: KeyboardEvent): number | null {
+  const match = /^(?:Digit|Numpad)(\d)$/.exec(event.code);
+  if (!match) {
+    return null;
+  }
+
+  const digit = Number.parseInt(match[1] ?? "", 10);
+  if (Number.isNaN(digit)) {
+    return null;
+  }
+
+  return digit === 0 ? 10 : digit;
+}
+
+function matchesHotkeyModifier(event: KeyboardEvent, modifier: HotkeyModifier): boolean {
+  const modifierPressed =
+    (modifier === "control" && event.ctrlKey) ||
+    (modifier === "alt" && event.altKey) ||
+    (modifier === "meta" && event.metaKey);
+
+  return (
+    modifierPressed &&
+    !event.shiftKey &&
+    (modifier === "control" || !event.ctrlKey) &&
+    (modifier === "alt" || !event.altKey) &&
+    (modifier === "meta" || !event.metaKey)
+  );
+}
+
+function findFallbackHotkeyModifier(
+  supportedModifiers: HotkeyModifier[],
+  blockedModifier: HotkeyModifier,
+  preferredModifier: HotkeyModifier,
+): HotkeyModifier {
+  if (preferredModifier !== blockedModifier && supportedModifiers.includes(preferredModifier)) {
+    return preferredModifier;
+  }
+
+  return (
+    supportedModifiers.find((modifier) => modifier !== blockedModifier) ?? preferredModifier
+  );
+}
+
+function getIndexedShortcutLabel(
+  modifier: HotkeyModifier,
+  slot: number,
+  isMacPlatform: boolean,
+): string {
+  return `${getModifierLabel(modifier, isMacPlatform)}+${slot === 10 ? "0" : String(slot)}`;
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  // xterm routes keyboard input through a hidden textarea. App hotkeys should
+  // still win there unless the user holds Shift to intentionally pass through.
+  if (target.closest(".xterm-helper-textarea")) {
+    return false;
+  }
+
+  if (target.isContentEditable) {
+    return true;
+  }
+
+  return target.closest("input, textarea, select, [contenteditable='true']") !== null;
+}
+
+function consumeShortcutEvent(event: KeyboardEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+}
 
 function getShellLabel(shellProfileId: string): string {
   switch (shellProfileId) {
@@ -52,6 +179,11 @@ function getShellLabel(shellProfileId: string): string {
 export function App() {
   const hasPreloadApi =
     typeof window !== "undefined" && typeof window.termbag !== "undefined";
+  const isMacPlatform = useMemo(() => detectMacPlatform(), []);
+  const supportedHotkeyModifiers = useMemo(
+    () => getSupportedHotkeyModifiers(isMacPlatform),
+    [isMacPlatform],
+  );
 
   const {
     bootstrapped,
@@ -125,6 +257,24 @@ export function App() {
     const stored = window.localStorage.getItem(SCROLLBAR_MODE_STORAGE_KEY);
     return stored === "aggressive" ? "aggressive" : "minimal";
   });
+  const [projectHotkeyModifier, setProjectHotkeyModifier] = useState<HotkeyModifier>(() =>
+    getStoredHotkeyModifier(
+      PROJECT_HOTKEY_MODIFIER_STORAGE_KEY,
+      supportedHotkeyModifiers,
+      getDefaultProjectHotkeyModifier(isMacPlatform),
+    ),
+  );
+  const [tabHotkeyModifier, setTabHotkeyModifier] = useState<HotkeyModifier>(() =>
+    getStoredHotkeyModifier(
+      TAB_HOTKEY_MODIFIER_STORAGE_KEY,
+      supportedHotkeyModifiers,
+      findFallbackHotkeyModifier(
+        supportedHotkeyModifiers,
+        getDefaultProjectHotkeyModifier(isMacPlatform),
+        getDefaultTabHotkeyModifier(isMacPlatform),
+      ),
+    ),
+  );
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
@@ -146,6 +296,14 @@ export function App() {
     document.documentElement.dataset.scrollbars = scrollbarMode;
     window.localStorage.setItem(SCROLLBAR_MODE_STORAGE_KEY, scrollbarMode);
   }, [scrollbarMode]);
+
+  useEffect(() => {
+    window.localStorage.setItem(PROJECT_HOTKEY_MODIFIER_STORAGE_KEY, projectHotkeyModifier);
+  }, [projectHotkeyModifier]);
+
+  useEffect(() => {
+    window.localStorage.setItem(TAB_HOTKEY_MODIFIER_STORAGE_KEY, tabHotkeyModifier);
+  }, [tabHotkeyModifier]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -234,13 +392,86 @@ export function App() {
     }
   }, [activeTab, selectedWorkspace, setSelectedTab]);
 
+  const updateProjectHotkeyModifier = (modifier: HotkeyModifier) => {
+    if (!supportedHotkeyModifiers.includes(modifier)) {
+      return;
+    }
+
+    setProjectHotkeyModifier(modifier);
+    if (modifier === tabHotkeyModifier) {
+      setTabHotkeyModifier(
+        findFallbackHotkeyModifier(supportedHotkeyModifiers, modifier, projectHotkeyModifier),
+      );
+    }
+  };
+
+  const updateTabHotkeyModifier = (modifier: HotkeyModifier) => {
+    if (!supportedHotkeyModifiers.includes(modifier)) {
+      return;
+    }
+
+    setTabHotkeyModifier(modifier);
+    if (modifier === projectHotkeyModifier) {
+      setProjectHotkeyModifier(
+        findFallbackHotkeyModifier(supportedHotkeyModifiers, modifier, tabHotkeyModifier),
+      );
+    }
+  };
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setTabContextMenu(null);
       }
 
-      if (!event.ctrlKey || !event.shiftKey || event.key.toLowerCase() !== "r") {
+      if (event.defaultPrevented || isEditableTarget(event.target)) {
+        return;
+      }
+
+      if (modalState || historyOpen || settingsOpen || shellPickerOpen || renameTabState) {
+        return;
+      }
+
+      const slot = getHotkeySlot(event);
+      if (slot !== null) {
+        if (matchesHotkeyModifier(event, projectHotkeyModifier)) {
+          const targetProject = sortedProjects[slot - 1];
+          if (!targetProject) {
+            return;
+          }
+
+          consumeShortcutEvent(event);
+          setTabContextMenu(null);
+          if (targetProject.id === selectedProjectId) {
+            return;
+          }
+          selectProject(targetProject.id);
+          return;
+        }
+
+        if (matchesHotkeyModifier(event, tabHotkeyModifier) && selectedWorkspace) {
+          const targetTab = selectedWorkspace.tabs[slot - 1];
+          if (!targetTab) {
+            return;
+          }
+
+          consumeShortcutEvent(event);
+          setTabContextMenu(null);
+          if (targetTab.id === selectedWorkspace.selectedTabId) {
+            return;
+          }
+          setSelectedTab(selectedWorkspace.project.id, targetTab.id);
+          return;
+        }
+      }
+
+      if (
+        !event.ctrlKey ||
+        !event.shiftKey ||
+        event.altKey ||
+        event.metaKey ||
+        event.key.toLowerCase() !== "r"
+      ) {
         return;
       }
 
@@ -254,9 +485,24 @@ export function App() {
       void loadHistory(selectedProjectId);
     };
 
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeTab, loadHistory, selectedProjectId]);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [
+    activeTab,
+    historyOpen,
+    loadHistory,
+    modalState,
+    projectHotkeyModifier,
+    renameTabState,
+    selectedProjectId,
+    selectProject,
+    selectedWorkspace,
+    setSelectedTab,
+    settingsOpen,
+    shellPickerOpen,
+    sortedProjects,
+    tabHotkeyModifier,
+  ]);
 
   const handleProjectSubmit = async (
     input: CreateProjectInput | UpdateProjectInput,
@@ -295,35 +541,43 @@ export function App() {
             {selectedProject?.name ?? ""}
           </div>
           <div className={`tab-strip tab-strip--titlebar tab-strip--${tabAlignment}`}>
-            {selectedWorkspace?.tabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                className={`tab-chip ${activeTab?.id === tab.id ? "tab-chip--active" : ""}`}
-                onClick={() => setSelectedTab(selectedWorkspace.project.id, tab.id)}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setSelectedTab(selectedWorkspace.project.id, tab.id);
-                  setTabContextMenu({
-                    tabId: tab.id,
-                    x: event.clientX,
-                    y: event.clientY,
-                  });
-                }}
-              >
-                <span>{tab.title}</span>
-                <span
-                  className="tab-chip__close"
-                  onClick={(event) => {
+            {selectedWorkspace?.tabs.map((tab, tabIndex) => {
+              const hotkeyHint =
+                tabIndex < 10
+                  ? getIndexedShortcutLabel(tabHotkeyModifier, tabIndex + 1, isMacPlatform)
+                  : null;
+
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`tab-chip ${activeTab?.id === tab.id ? "tab-chip--active" : ""}`}
+                  onClick={() => setSelectedTab(selectedWorkspace.project.id, tab.id)}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
                     event.stopPropagation();
-                    void closeTab(tab.id);
+                    setSelectedTab(selectedWorkspace.project.id, tab.id);
+                    setTabContextMenu({
+                      tabId: tab.id,
+                      x: event.clientX,
+                      y: event.clientY,
+                    });
                   }}
+                  title={hotkeyHint ? `${tab.title} (${hotkeyHint})` : tab.title}
                 >
-                  x
-                </span>
-              </button>
-            )) ?? null}
+                  <span>{tab.title}</span>
+                  <span
+                    className="tab-chip__close"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void closeTab(tab.id);
+                    }}
+                  >
+                    x
+                  </span>
+                </button>
+              );
+            }) ?? null}
             {selectedProject ? (
               <>
                 <button
@@ -385,15 +639,23 @@ export function App() {
               </div>
             ) : null}
 
-            {sortedProjects.map((project) => {
+            {sortedProjects.map((project, projectIndex) => {
               const isActive = project.id === selectedProjectId;
+              const hotkeyHint =
+                projectIndex < 10
+                  ? getIndexedShortcutLabel(
+                      projectHotkeyModifier,
+                      projectIndex + 1,
+                      isMacPlatform,
+                    )
+                  : null;
               return (
                 <button
                   key={project.id}
                   type="button"
                   className={`project-card ${isActive ? "project-card--active" : ""} ${sidebarCollapsed ? "project-card--collapsed" : ""}`}
                   onClick={() => selectProject(project.id)}
-                  title={sidebarCollapsed ? project.name : undefined}
+                  title={hotkeyHint ? `${project.name} (${hotkeyHint})` : project.name}
                 >
                   {sidebarCollapsed ? (
                     <span className="project-card__mono">
@@ -510,15 +772,21 @@ export function App() {
 
       {settingsOpen ? (
         <SettingsModal
+          isMacPlatform={isMacPlatform}
           themeMode={themeMode}
           tabAlignment={tabAlignment}
           projectSortMode={projectSortMode}
           scrollbarMode={scrollbarMode}
+          projectHotkeyModifier={projectHotkeyModifier}
+          tabHotkeyModifier={tabHotkeyModifier}
+          supportedHotkeyModifiers={supportedHotkeyModifiers}
           onClose={() => setSettingsOpen(false)}
           onThemeChange={setThemeMode}
           onTabAlignmentChange={setTabAlignment}
           onProjectSortModeChange={setProjectSortMode}
           onScrollbarModeChange={setScrollbarMode}
+          onProjectHotkeyModifierChange={updateProjectHotkeyModifier}
+          onTabHotkeyModifierChange={updateTabHotkeyModifier}
         />
       ) : null}
 
@@ -707,15 +975,21 @@ function FloatingError({ message }: FloatingErrorProps) {
 }
 
 interface SettingsModalProps {
+  isMacPlatform: boolean;
   themeMode: ThemeMode;
   tabAlignment: TabAlignment;
   projectSortMode: ProjectSortMode;
   scrollbarMode: ScrollbarMode;
+  projectHotkeyModifier: HotkeyModifier;
+  tabHotkeyModifier: HotkeyModifier;
+  supportedHotkeyModifiers: HotkeyModifier[];
   onClose(): void;
   onThemeChange(theme: ThemeMode): void;
   onTabAlignmentChange(alignment: TabAlignment): void;
   onProjectSortModeChange(mode: ProjectSortMode): void;
   onScrollbarModeChange(mode: ScrollbarMode): void;
+  onProjectHotkeyModifierChange(modifier: HotkeyModifier): void;
+  onTabHotkeyModifierChange(modifier: HotkeyModifier): void;
 }
 
 interface ShellPickerModalProps {
@@ -771,15 +1045,21 @@ function ShellPickerModal({
 }
 
 function SettingsModal({
+  isMacPlatform,
   themeMode,
   tabAlignment,
   projectSortMode,
   scrollbarMode,
+  projectHotkeyModifier,
+  tabHotkeyModifier,
+  supportedHotkeyModifiers,
   onClose,
   onThemeChange,
   onTabAlignmentChange,
   onProjectSortModeChange,
   onScrollbarModeChange,
+  onProjectHotkeyModifierChange,
+  onTabHotkeyModifierChange,
 }: SettingsModalProps) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -864,6 +1144,54 @@ function SettingsModal({
               Auto-hide
             </button>
           </div>
+        </div>
+        <div className="settings-group settings-group--hotkeys">
+          <span className="settings-group__label">Hotkeys</span>
+          <p className="settings-note">
+            Use 1-9 for the first nine projects or tabs. Use 0 for item 10. Shortcuts
+            stay distinct so project and tab selection never collide. Hold Shift to
+            pass a matching shortcut through to the active shell instead.
+          </p>
+        </div>
+        <div className="settings-group">
+          <span className="settings-group__label">Project switch modifier</span>
+          <div className="theme-toggle">
+            {supportedHotkeyModifiers.map((modifier) => (
+              <button
+                key={`project-${modifier}`}
+                type="button"
+                className={`ghost-button ${projectHotkeyModifier === modifier ? "theme-toggle__active" : ""}`}
+                onClick={() => onProjectHotkeyModifierChange(modifier)}
+              >
+                {getModifierLabel(modifier, isMacPlatform)}
+              </button>
+            ))}
+          </div>
+          <p className="settings-note">
+            {getIndexedShortcutLabel(projectHotkeyModifier, 1, isMacPlatform)} through{" "}
+            {getIndexedShortcutLabel(projectHotkeyModifier, 10, isMacPlatform)} select
+            projects in sidebar order.
+          </p>
+        </div>
+        <div className="settings-group">
+          <span className="settings-group__label">Tab switch modifier</span>
+          <div className="theme-toggle">
+            {supportedHotkeyModifiers.map((modifier) => (
+              <button
+                key={`tab-${modifier}`}
+                type="button"
+                className={`ghost-button ${tabHotkeyModifier === modifier ? "theme-toggle__active" : ""}`}
+                onClick={() => onTabHotkeyModifierChange(modifier)}
+              >
+                {getModifierLabel(modifier, isMacPlatform)}
+              </button>
+            ))}
+          </div>
+          <p className="settings-note">
+            {getIndexedShortcutLabel(tabHotkeyModifier, 1, isMacPlatform)} through{" "}
+            {getIndexedShortcutLabel(tabHotkeyModifier, 10, isMacPlatform)} select tabs
+            in titlebar order.
+          </p>
         </div>
         <div className="modal__actions">
           <button type="button" className="ghost-button" onClick={onClose}>
