@@ -879,7 +879,7 @@ function RenameTabModal({
   const [title, setTitle] = useState(initialTitle);
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop">
       <div className="modal modal--compact" onClick={(event) => event.stopPropagation()}>
         <h3>Rename tab</h3>
         <label>

@@ -22,6 +22,10 @@ const api: TermBagApi = {
   bootstrap: () => ipcRenderer.invoke(IPC_CHANNELS.bootstrap) as Promise<BootstrapData>,
   pickDirectory: (initialPath?: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.pickDirectory, initialPath) as Promise<string | null>,
+  readClipboardText: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.readClipboardText) as Promise<string>,
+  writeClipboardText: (text: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.writeClipboardText, text) as Promise<void>,
   setWindowTheme: (theme) =>
     ipcRenderer.invoke(IPC_CHANNELS.setWindowTheme, theme) as Promise<void>,
   getProjectWorkspace: (projectId) =>

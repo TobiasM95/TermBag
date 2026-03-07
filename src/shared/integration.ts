@@ -14,7 +14,17 @@ const ALT_SCREEN_ENTER = /\u001b\[\?(?:1049|1047|47)h/g;
 const ALT_SCREEN_EXIT = /\u001b\[\?(?:1049|1047|47)l/g;
 const INITIAL_TERMINAL_NOISE = /\u001b\[\?9001h|\u001b\[\?1004h|\u001b\[\?25[hl]|\u001b\[2J|\u001b\[H|\u001b\[K|\u001b\[(?:0|)m/g;
 
-export function getPowerShellBootstrapLines(): string[] {
+export function getPowerShellEncodingBootstrapLines(): string[] {
+  return [
+    "$script:__TermBagUtf8 = New-Object System.Text.UTF8Encoding($false)",
+    "[Console]::InputEncoding = $script:__TermBagUtf8",
+    "[Console]::OutputEncoding = $script:__TermBagUtf8",
+    "$OutputEncoding = $script:__TermBagUtf8",
+    "chcp.com 65001 > $null",
+  ];
+}
+
+export function getPowerShellPromptBootstrapLines(): string[] {
   return [
     "$script:__TermBagOriginalPrompt = (Get-Command prompt).ScriptBlock",
     "function global:prompt {",
@@ -25,6 +35,13 @@ export function getPowerShellBootstrapLines(): string[] {
     "  Write-Host ($esc + ']633;TermBagPrompt=ready' + $bel) -NoNewline",
     "  & $script:__TermBagOriginalPrompt",
     "}",
+  ];
+}
+
+export function getPowerShellBootstrapLines(): string[] {
+  return [
+    ...getPowerShellEncodingBootstrapLines(),
+    ...getPowerShellPromptBootstrapLines(),
   ];
 }
 

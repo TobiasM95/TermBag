@@ -36,7 +36,9 @@ export class ShellCatalog {
     if (profile.id === "cmd") {
       return {
         executable: profile.executable,
-        args: bootstrapScriptPath ? ["/Q", "/K", bootstrapScriptPath] : ["/Q", "/K"],
+        args: bootstrapScriptPath
+          ? ["/Q", "/K", bootstrapScriptPath]
+          : ["/Q", "/K", "chcp 65001 >nul"],
         supportsIntegration: false,
       };
     }

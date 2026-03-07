@@ -1,6 +1,14 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, Menu, dialog, ipcMain, type OpenDialogOptions } from "electron";
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  clipboard,
+  dialog,
+  ipcMain,
+  type OpenDialogOptions,
+} from "electron";
 import { IPC_CHANNELS } from "../shared/ipc.js";
 import type {
   ActivateTabInput,
@@ -128,6 +136,10 @@ function registerIpcHandlers(): void {
     }
 
     return result.filePaths[0] ?? null;
+  });
+  ipcMain.handle(IPC_CHANNELS.readClipboardText, () => clipboard.readText());
+  ipcMain.handle(IPC_CHANNELS.writeClipboardText, (_event, text: string) => {
+    clipboard.writeText(text);
   });
   ipcMain.handle(IPC_CHANNELS.setWindowTheme, (_event, theme: "dark" | "light") => {
     if (!mainWindow || mainWindow.isDestroyed()) {

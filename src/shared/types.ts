@@ -170,6 +170,8 @@ export interface RecallHistoryResult {
 export interface TermBagApi {
   bootstrap(): Promise<BootstrapData>;
   pickDirectory(initialPath?: string): Promise<string | null>;
+  readClipboardText(): Promise<string>;
+  writeClipboardText(text: string): Promise<void>;
   setWindowTheme(theme: "dark" | "light"): Promise<void>;
   getProjectWorkspace(projectId: string): Promise<ProjectWorkspace>;
   createProject(input: CreateProjectInput): Promise<ProjectWorkspace>;

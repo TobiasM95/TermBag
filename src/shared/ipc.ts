@@ -1,6 +1,8 @@
 export const IPC_CHANNELS = {
   bootstrap: "app:bootstrap",
   pickDirectory: "app:pickDirectory",
+  readClipboardText: "app:readClipboardText",
+  writeClipboardText: "app:writeClipboardText",
   getProjectWorkspace: "projects:getWorkspace",
   createProject: "projects:create",
   updateProject: "projects:update",

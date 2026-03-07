@@ -2,7 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ShellProfile } from "../../shared/types.js";
-import { getPowerShellBootstrapLines } from "../../shared/integration.js";
+import {
+  getPowerShellEncodingBootstrapLines,
+  getPowerShellPromptBootstrapLines,
+} from "../../shared/integration.js";
 
 const BOOTSTRAP_DIR = path.join(os.tmpdir(), "termbag-bootstrap");
 const STALE_BOOTSTRAP_AGE_MS = 1000 * 60 * 60 * 24;
@@ -80,6 +83,7 @@ export function cleanupBootstrapAssets(paths: string[]): void {
 export function buildCmdBootstrapScript(transcriptPath: string): string {
   return [
     "@echo off",
+    "@chcp 65001 >nul",
     `if exist "${transcriptPath}" type "${transcriptPath}"`,
   ].join("\r\n");
 }
@@ -88,6 +92,7 @@ export function buildPowerShellBootstrapFile(transcriptPath: string): string {
   const quotedPath = quotePowerShellLiteral(transcriptPath);
   return [
     "$ErrorActionPreference = 'SilentlyContinue'",
+    ...getPowerShellEncodingBootstrapLines(),
     `$TranscriptPath = ${quotedPath}`,
     "if (Test-Path -LiteralPath $TranscriptPath) {",
     "  $text = [System.IO.File]::ReadAllText($TranscriptPath, [System.Text.Encoding]::UTF8)",
@@ -95,7 +100,7 @@ export function buildPowerShellBootstrapFile(transcriptPath: string): string {
     "    [Console]::Write($text)",
     "  }",
     "}",
-    ...getPowerShellBootstrapLines(),
+    ...getPowerShellPromptBootstrapLines(),
     "",
   ].join("\r\n");
 }

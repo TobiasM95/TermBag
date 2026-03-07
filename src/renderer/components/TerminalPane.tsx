@@ -32,6 +32,14 @@ function nextFrame(): Promise<void> {
   });
 }
 
+function isCopyShortcut(event: KeyboardEvent): boolean {
+  return (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "c";
+}
+
+function isPasteShortcut(event: KeyboardEvent): boolean {
+  return (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "v";
+}
+
 export function TerminalPane({ project, tab, themeMode }: TerminalPaneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const restartRequestedRef = useRef(false);
@@ -96,14 +104,55 @@ export function TerminalPane({ project, tab, themeMode }: TerminalPaneProps) {
     const terminal = new Terminal({
       convertEol: false,
       cursorBlink: true,
-      fontFamily: "'Cascadia Code', Consolas, monospace",
+      customGlyphs: true,
+      fontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
       fontSize: 13,
+      rescaleOverlappingGlyphs: true,
       scrollback: 3000,
       theme: terminalTheme,
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(hostRef.current);
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown") {
+        return true;
+      }
+
+      if (isCopyShortcut(event)) {
+        if (!terminal.hasSelection()) {
+          return true;
+        }
+
+        event.preventDefault();
+        void window.termbag
+          .writeClipboardText(terminal.getSelection())
+          .catch((error: unknown) => {
+            console.error("Failed to copy terminal selection.", error);
+          });
+        return false;
+      }
+
+      if (isPasteShortcut(event)) {
+        event.preventDefault();
+        void window.termbag
+          .readClipboardText()
+          .then((text) => {
+            if (!text) {
+              return;
+            }
+
+            terminal.focus();
+            terminal.paste(text);
+          })
+          .catch((error: unknown) => {
+            console.error("Failed to paste into terminal.", error);
+          });
+        return false;
+      }
+
+      return true;
+    });
     terminal.focus();
 
     const fitTerminal = (): TerminalSize => {
