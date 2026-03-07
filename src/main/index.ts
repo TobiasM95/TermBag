@@ -13,6 +13,12 @@ import type {
   UpdateProjectInput,
 } from "../shared/types.js";
 import { describeStartupFailure } from "./startup-errors.js";
+import {
+  captureWindowState,
+  loadWindowState,
+  persistWindowState,
+  toBrowserWindowOptions,
+} from "./services/window-state.js";
 
 interface AppServiceContract {
   bootstrap(): unknown;
@@ -46,9 +52,9 @@ function getPreloadPath(): string {
 }
 
 async function createWindow(): Promise<void> {
+  const windowState = loadWindowState(app.getPath("userData"));
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 920,
+    ...toBrowserWindowOptions(windowState),
     minWidth: 1080,
     minHeight: 720,
     backgroundColor: "#0e1318",
@@ -60,6 +66,9 @@ async function createWindow(): Promise<void> {
     },
   });
   mainWindow.setMenuBarVisibility(false);
+  if (windowState.isMaximized) {
+    mainWindow.maximize();
+  }
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
@@ -71,6 +80,20 @@ async function createWindow(): Promise<void> {
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+
+  const persistCurrentWindowState = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    persistWindowState(app.getPath("userData"), captureWindowState(mainWindow));
+  };
+
+  mainWindow.on("resize", persistCurrentWindowState);
+  mainWindow.on("move", persistCurrentWindowState);
+  mainWindow.on("maximize", persistCurrentWindowState);
+  mainWindow.on("unmaximize", persistCurrentWindowState);
+  mainWindow.on("close", persistCurrentWindowState);
 }
 
 function registerIpcHandlers(): void {
