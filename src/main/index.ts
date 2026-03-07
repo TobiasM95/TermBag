@@ -47,6 +47,7 @@ let quitting = false;
 const CURRENT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(CURRENT_DIR, "../..");
 const TITLEBAR_HEIGHT = 32;
+const APP_ICON_PATH = path.join(REPO_ROOT, "build", "logo-tight.png");
 
 function getPreloadPath(): string {
   return path.resolve(CURRENT_DIR, "../preload/index.js");
@@ -67,6 +68,7 @@ async function createWindow(): Promise<void> {
     minWidth: 1080,
     minHeight: 720,
     backgroundColor: "#0e1318",
+    icon: APP_ICON_PATH,
     titleBarStyle: "hidden",
     titleBarOverlay: getTitleBarOverlayForTheme("dark"),
     webPreferences: {

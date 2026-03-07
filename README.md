@@ -213,6 +213,18 @@ Run the automated test suite:
 pnpm test
 ```
 
+## App Icon Assets
+
+Store the app icon assets in [`build/`](/C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/build):
+
+- [`logo-tight.png`](/C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/build/logo-tight.png): canonical high-resolution runtime/source icon
+- [`icon.ico`](/C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/build/icon.ico): Windows icon for packaged app builds
+
+Current runtime behavior:
+
+- Electron uses [`logo-tight.png`](/C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/build/logo-tight.png) for the window/taskbar icon during `pnpm dev` and `pnpm preview`
+- [`icon.ico`](/C:/Users/tobim/Documents/Programming/SmallProjects/TermBag/build/icon.ico) is prepared for future Windows packaging configuration
+
 Current tests cover pure logic around:
 
 - snapshot retention
