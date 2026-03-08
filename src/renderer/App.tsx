@@ -58,6 +58,7 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = "termbag-sidebar-collapsed";
 const SCROLLBAR_MODE_STORAGE_KEY = "termbag-scrollbar-mode";
 const PROJECT_HOTKEY_MODIFIER_STORAGE_KEY = "termbag-project-hotkey-modifier";
 const AVAILABLE_HOTKEY_MODIFIERS: HotkeyModifier[] = ["control", "alt"];
+const TERMINAL_SHORTCUT_BYPASS_TIMEOUT_MS = 2400;
 
 type LayoutPresetDefinition = {
   id: LayoutPresetId;
@@ -208,14 +209,18 @@ function getIndexedShortcutLabel(
   return `${getModifierLabel(modifier, isMacPlatform)}+${slot === 10 ? "0" : String(slot)}`;
 }
 
+function isTerminalKeyboardTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && target.closest(".xterm-helper-textarea") !== null;
+}
+
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false;
   }
 
-  // xterm routes keyboard input through a hidden textarea. App hotkeys should
-  // still win there unless the user holds Shift to intentionally pass through.
-  if (target.closest(".xterm-helper-textarea")) {
+  // xterm routes keyboard input through a hidden textarea. Treat it as
+  // non-editable so app shortcuts can still win while the terminal is focused.
+  if (isTerminalKeyboardTarget(target)) {
     return false;
   }
 
@@ -230,6 +235,26 @@ function consumeShortcutEvent(event: KeyboardEvent): void {
   event.preventDefault();
   event.stopPropagation();
   event.stopImmediatePropagation();
+}
+
+function isModifierOnlyEvent(event: KeyboardEvent): boolean {
+  return (
+    event.key === "Alt" ||
+    event.key === "Control" ||
+    event.key === "Meta" ||
+    event.key === "Shift"
+  );
+}
+
+function isTerminalShortcutBypassLeader(event: KeyboardEvent): boolean {
+  return (
+    !event.repeat &&
+    event.ctrlKey &&
+    !event.altKey &&
+    !event.metaKey &&
+    !event.shiftKey &&
+    (event.code === "Space" || event.key === " ")
+  );
 }
 
 function getShellLabel(shellProfileId: string): string {
@@ -314,6 +339,7 @@ export function App() {
   });
   const [recallNotice, setRecallNotice] = useState<string | null>(null);
   const [templateNotice, setTemplateNotice] = useState<string | null>(null);
+  const [terminalShortcutBypassArmed, setTerminalShortcutBypassArmed] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     if (typeof window === "undefined") {
       return "dark";
@@ -432,6 +458,25 @@ export function App() {
 
     return () => window.clearTimeout(timer);
   }, [templateNotice]);
+
+  useEffect(() => {
+    if (!terminalShortcutBypassArmed) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setTerminalShortcutBypassArmed(false);
+    }, TERMINAL_SHORTCUT_BYPASS_TIMEOUT_MS);
+    const clearBypass = () => {
+      setTerminalShortcutBypassArmed(false);
+    };
+
+    window.addEventListener("blur", clearBypass);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("blur", clearBypass);
+    };
+  }, [terminalShortcutBypassArmed]);
 
   const selectedWorkspace = selectedProjectId ? workspaces[selectedProjectId] : undefined;
   const selectedProject =
@@ -573,11 +618,39 @@ export function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (terminalShortcutBypassArmed) {
+        if (event.key === "Escape") {
+          consumeShortcutEvent(event);
+          setTerminalShortcutBypassArmed(false);
+          return;
+        }
+
+        if (isModifierOnlyEvent(event)) {
+          return;
+        }
+
+        setTerminalShortcutBypassArmed(false);
+        if (isTerminalKeyboardTarget(event.target)) {
+          return;
+        }
+      }
+
       if (event.key === "Escape") {
         setTabContextMenu(null);
       }
 
       if (event.defaultPrevented || isEditableTarget(event.target)) {
+        return;
+      }
+
+      if (isTerminalShortcutBypassLeader(event)) {
+        if (!isTerminalKeyboardTarget(event.target)) {
+          return;
+        }
+
+        consumeShortcutEvent(event);
+        setTabContextMenu(null);
+        setTerminalShortcutBypassArmed(true);
         return;
       }
 
@@ -713,6 +786,7 @@ export function App() {
     modalState,
     projectHotkeyModifier,
     renameTabState,
+    terminalShortcutBypassArmed,
     selectedProjectId,
     selectProject,
     selectedWorkspace,
@@ -1015,6 +1089,9 @@ export function App() {
 
       {error ? <FloatingError message={error} /> : null}
       {templateNotice ? <FloatingNotice message={templateNotice} /> : null}
+      {!templateNotice && terminalShortcutBypassArmed ? (
+        <FloatingNotice message="Terminal bypass armed. Next chord goes to the active shell." />
+      ) : null}
       {bootstrapped && loading ? (
         <BusyOverlay
           message={applyTemplateState ? "Applying template..." : "Updating workspace..."}
@@ -1988,8 +2065,8 @@ function SettingsModal({
           <p className="settings-note">
             Use 1-9 for the first nine projects or tabs. Use 0 for item 10. Use Q,
             W, E, and R for the first four visible panes, and use the arrow keys to
-            move focus between panes in the current layout. Hold Shift to pass a
-            matching shortcut through to the active shell instead.
+            move focus between panes in the current layout. Press Ctrl+Space to send
+            the next chord to the active shell instead.
           </p>
         </div>
         <div className="settings-group">
