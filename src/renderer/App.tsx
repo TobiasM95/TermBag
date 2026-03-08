@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
+import {
+  detectLayoutPresetId,
+  flattenLayoutLeafSessionIds,
+  getNextLayoutPaneSlot,
+} from "../shared/layout";
 import { TerminalPane } from "./components/TerminalPane";
 import { useAppStore } from "./store/app-store";
 import type {
   CreateProjectInput,
   LayoutPresetId,
-  PersistedTabLayout,
   Project,
   ShellProfileAvailability,
   TabLayoutNode,
@@ -33,7 +37,7 @@ type ThemeMode = "dark" | "light";
 type TabAlignment = "left" | "center" | "right";
 type ProjectSortMode = "created" | "alphabetical";
 type ScrollbarMode = "minimal" | "aggressive";
-type HotkeyModifier = "control" | "alt" | "meta";
+type HotkeyModifier = "control" | "alt";
 
 const THEME_STORAGE_KEY = "termbag-theme-mode";
 const TAB_ALIGNMENT_STORAGE_KEY = "termbag-tab-alignment";
@@ -41,7 +45,7 @@ const PROJECT_SORT_STORAGE_KEY = "termbag-project-sort-mode";
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "termbag-sidebar-collapsed";
 const SCROLLBAR_MODE_STORAGE_KEY = "termbag-scrollbar-mode";
 const PROJECT_HOTKEY_MODIFIER_STORAGE_KEY = "termbag-project-hotkey-modifier";
-const TAB_HOTKEY_MODIFIER_STORAGE_KEY = "termbag-tab-hotkey-modifier";
+const AVAILABLE_HOTKEY_MODIFIERS: HotkeyModifier[] = ["control", "alt"];
 
 type LayoutPresetDefinition = {
   id: LayoutPresetId;
@@ -92,21 +96,12 @@ function detectMacPlatform(): boolean {
   return /mac/i.test(platform);
 }
 
-function getSupportedHotkeyModifiers(isMacPlatform: boolean): HotkeyModifier[] {
-  return isMacPlatform ? ["meta", "control", "alt"] : ["control", "alt"];
-}
-
-function getDefaultProjectHotkeyModifier(isMacPlatform: boolean): HotkeyModifier {
-  return isMacPlatform ? "meta" : "control";
-}
-
-function getDefaultTabHotkeyModifier(isMacPlatform: boolean): HotkeyModifier {
-  return isMacPlatform ? "control" : "alt";
+function getDefaultProjectHotkeyModifier(): HotkeyModifier {
+  return "control";
 }
 
 function getStoredHotkeyModifier(
   storageKey: string,
-  supportedModifiers: HotkeyModifier[],
   fallback: HotkeyModifier,
 ): HotkeyModifier {
   if (typeof window === "undefined") {
@@ -114,15 +109,17 @@ function getStoredHotkeyModifier(
   }
 
   const stored = window.localStorage.getItem(storageKey);
-  return stored && supportedModifiers.includes(stored as HotkeyModifier)
+  return stored && AVAILABLE_HOTKEY_MODIFIERS.includes(stored as HotkeyModifier)
     ? (stored as HotkeyModifier)
     : fallback;
 }
 
+function getComplementaryHotkeyModifier(modifier: HotkeyModifier): HotkeyModifier {
+  return modifier === "control" ? "alt" : "control";
+}
+
 function getModifierLabel(modifier: HotkeyModifier, isMacPlatform: boolean): string {
   switch (modifier) {
-    case "meta":
-      return isMacPlatform ? "Command" : "Meta";
     case "alt":
       return isMacPlatform ? "Option" : "Alt";
     case "control":
@@ -145,32 +142,49 @@ function getHotkeySlot(event: KeyboardEvent): number | null {
   return digit === 0 ? 10 : digit;
 }
 
+function getSessionHotkeySlot(event: KeyboardEvent): number | null {
+  switch (event.code) {
+    case "KeyQ":
+      return 0;
+    case "KeyW":
+      return 1;
+    case "KeyE":
+      return 2;
+    case "KeyR":
+      return 3;
+    default:
+      return null;
+  }
+}
+
+function getArrowNavigationDirection(
+  event: KeyboardEvent,
+): "up" | "down" | "left" | "right" | null {
+  switch (event.key) {
+    case "ArrowUp":
+      return "up";
+    case "ArrowDown":
+      return "down";
+    case "ArrowLeft":
+      return "left";
+    case "ArrowRight":
+      return "right";
+    default:
+      return null;
+  }
+}
+
 function matchesHotkeyModifier(event: KeyboardEvent, modifier: HotkeyModifier): boolean {
   const modifierPressed =
     (modifier === "control" && event.ctrlKey) ||
-    (modifier === "alt" && event.altKey) ||
-    (modifier === "meta" && event.metaKey);
+    (modifier === "alt" && event.altKey);
 
   return (
     modifierPressed &&
     !event.shiftKey &&
     (modifier === "control" || !event.ctrlKey) &&
     (modifier === "alt" || !event.altKey) &&
-    (modifier === "meta" || !event.metaKey)
-  );
-}
-
-function findFallbackHotkeyModifier(
-  supportedModifiers: HotkeyModifier[],
-  blockedModifier: HotkeyModifier,
-  preferredModifier: HotkeyModifier,
-): HotkeyModifier {
-  if (preferredModifier !== blockedModifier && supportedModifiers.includes(preferredModifier)) {
-    return preferredModifier;
-  }
-
-  return (
-    supportedModifiers.find((modifier) => modifier !== blockedModifier) ?? preferredModifier
+    !event.metaKey
   );
 }
 
@@ -219,76 +233,10 @@ function getShellLabel(shellProfileId: string): string {
   }
 }
 
-function isTwoLeafSplit(
-  node: TabLayoutNode,
-  direction: "row" | "column",
-): boolean {
-  return (
-    node.kind === "split" &&
-    node.direction === direction &&
-    node.children.length === 2 &&
-    node.children[0]?.kind === "leaf" &&
-    node.children[1]?.kind === "leaf"
-  );
-}
-
-function detectLayoutPresetId(layout: PersistedTabLayout): LayoutPresetId | null {
-  const { root } = layout;
-
-  if (root.kind === "leaf") {
-    return "single";
-  }
-
-  if (isTwoLeafSplit(root, "column")) {
-    return "split_horizontal";
-  }
-
-  if (isTwoLeafSplit(root, "row")) {
-    return "split_vertical";
-  }
-
-  if (
-    root.direction === "column" &&
-    root.children.length === 2 &&
-    root.children[0] &&
-    root.children[1] &&
-    isTwoLeafSplit(root.children[0], "row") &&
-    isTwoLeafSplit(root.children[1], "row")
-  ) {
-    return "grid_2x2";
-  }
-
-  if (
-    root.direction === "row" &&
-    root.children.length === 2 &&
-    root.children[0]?.kind === "leaf" &&
-    root.children[1] &&
-    isTwoLeafSplit(root.children[1], "column")
-  ) {
-    return "main_left_stack_right";
-  }
-
-  if (
-    root.direction === "row" &&
-    root.children.length === 2 &&
-    root.children[0] &&
-    isTwoLeafSplit(root.children[0], "column") &&
-    root.children[1]?.kind === "leaf"
-  ) {
-    return "stack_left_main_right";
-  }
-
-  return null;
-}
-
 export function App() {
   const hasPreloadApi =
     typeof window !== "undefined" && typeof window.termbag !== "undefined";
   const isMacPlatform = useMemo(() => detectMacPlatform(), []);
-  const supportedHotkeyModifiers = useMemo(
-    () => getSupportedHotkeyModifiers(isMacPlatform),
-    [isMacPlatform],
-  );
 
   const {
     bootstrapped,
@@ -368,21 +316,10 @@ export function App() {
   const [projectHotkeyModifier, setProjectHotkeyModifier] = useState<HotkeyModifier>(() =>
     getStoredHotkeyModifier(
       PROJECT_HOTKEY_MODIFIER_STORAGE_KEY,
-      supportedHotkeyModifiers,
-      getDefaultProjectHotkeyModifier(isMacPlatform),
+      getDefaultProjectHotkeyModifier(),
     ),
   );
-  const [tabHotkeyModifier, setTabHotkeyModifier] = useState<HotkeyModifier>(() =>
-    getStoredHotkeyModifier(
-      TAB_HOTKEY_MODIFIER_STORAGE_KEY,
-      supportedHotkeyModifiers,
-      findFallbackHotkeyModifier(
-        supportedHotkeyModifiers,
-        getDefaultProjectHotkeyModifier(isMacPlatform),
-        getDefaultTabHotkeyModifier(isMacPlatform),
-      ),
-    ),
-  );
+  const tabSessionHotkeyModifier = getComplementaryHotkeyModifier(projectHotkeyModifier);
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
@@ -408,10 +345,6 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem(PROJECT_HOTKEY_MODIFIER_STORAGE_KEY, projectHotkeyModifier);
   }, [projectHotkeyModifier]);
-
-  useEffect(() => {
-    window.localStorage.setItem(TAB_HOTKEY_MODIFIER_STORAGE_KEY, tabHotkeyModifier);
-  }, [tabHotkeyModifier]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -518,6 +451,14 @@ export function App() {
     return detectLayoutPresetId(activeTab.layout);
   }, [activeTab]);
 
+  const activeVisibleSessionIds = useMemo(() => {
+    if (!activeTab) {
+      return [];
+    }
+
+    return flattenLayoutLeafSessionIds(activeTab.layout);
+  }, [activeTab]);
+
   useEffect(() => {
     if (
       selectedWorkspace &&
@@ -529,29 +470,22 @@ export function App() {
   }, [activeTab, selectedWorkspace, setSelectedTab]);
 
   const updateProjectHotkeyModifier = (modifier: HotkeyModifier) => {
-    if (!supportedHotkeyModifiers.includes(modifier)) {
+    if (!AVAILABLE_HOTKEY_MODIFIERS.includes(modifier)) {
       return;
     }
 
     setProjectHotkeyModifier(modifier);
-    if (modifier === tabHotkeyModifier) {
-      setTabHotkeyModifier(
-        findFallbackHotkeyModifier(supportedHotkeyModifiers, modifier, projectHotkeyModifier),
-      );
-    }
   };
 
-  const updateTabHotkeyModifier = (modifier: HotkeyModifier) => {
-    if (!supportedHotkeyModifiers.includes(modifier)) {
+  const focusSessionById = (tabId: string, sessionId: string) => {
+    if (!activeTab || activeTab.id !== tabId || activeTab.focusedSessionId === sessionId) {
       return;
     }
 
-    setTabHotkeyModifier(modifier);
-    if (modifier === projectHotkeyModifier) {
-      setProjectHotkeyModifier(
-        findFallbackHotkeyModifier(supportedHotkeyModifiers, modifier, tabHotkeyModifier),
-      );
-    }
+    void setFocusedSession({
+      tabId,
+      sessionId,
+    });
   };
 
   useEffect(() => {
@@ -592,7 +526,7 @@ export function App() {
           return;
         }
 
-        if (matchesHotkeyModifier(event, tabHotkeyModifier) && selectedWorkspace) {
+        if (matchesHotkeyModifier(event, tabSessionHotkeyModifier) && selectedWorkspace) {
           const targetTab = selectedWorkspace.tabs[slot - 1];
           if (!targetTab) {
             return;
@@ -606,6 +540,57 @@ export function App() {
           setSelectedTab(selectedWorkspace.project.id, targetTab.id);
           return;
         }
+      }
+
+      const sessionSlot = getSessionHotkeySlot(event);
+      if (
+        sessionSlot !== null &&
+        activeTab &&
+        matchesHotkeyModifier(event, tabSessionHotkeyModifier)
+      ) {
+        const targetSessionId = activeVisibleSessionIds[sessionSlot];
+        if (!targetSessionId) {
+          return;
+        }
+
+        consumeShortcutEvent(event);
+        setTabContextMenu(null);
+        focusSessionById(activeTab.id, targetSessionId);
+        return;
+      }
+
+      const navigationDirection = getArrowNavigationDirection(event);
+      if (
+        navigationDirection &&
+        activeTab &&
+        activeLayoutPresetId &&
+        matchesHotkeyModifier(event, tabSessionHotkeyModifier)
+      ) {
+        const currentSlot = activeVisibleSessionIds.findIndex(
+          (sessionId) => sessionId === activeTab.focusedSessionId,
+        );
+        if (currentSlot === -1) {
+          return;
+        }
+
+        const nextSlot = getNextLayoutPaneSlot(
+          activeLayoutPresetId,
+          currentSlot,
+          navigationDirection,
+        );
+        if (nextSlot === null) {
+          return;
+        }
+
+        const targetSessionId = activeVisibleSessionIds[nextSlot];
+        if (!targetSessionId) {
+          return;
+        }
+
+        consumeShortcutEvent(event);
+        setTabContextMenu(null);
+        focusSessionById(activeTab.id, targetSessionId);
+        return;
       }
 
       if (
@@ -631,8 +616,11 @@ export function App() {
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [
+    activeLayoutPresetId,
     activeSession,
     activeTab,
+    activeVisibleSessionIds,
+    focusSessionById,
     historyOpen,
     loadHistory,
     modalState,
@@ -647,7 +635,7 @@ export function App() {
     layoutsOpen,
     shellPickerOpen,
     sortedProjects,
-    tabHotkeyModifier,
+    tabSessionHotkeyModifier,
   ]);
 
   const handleProjectSubmit = async (
@@ -690,7 +678,11 @@ export function App() {
             {selectedWorkspace?.tabs.map((tab, tabIndex) => {
               const hotkeyHint =
                 tabIndex < 10
-                  ? getIndexedShortcutLabel(tabHotkeyModifier, tabIndex + 1, isMacPlatform)
+                  ? getIndexedShortcutLabel(
+                      tabSessionHotkeyModifier,
+                      tabIndex + 1,
+                      isMacPlatform,
+                    )
                   : null;
 
               return (
@@ -911,16 +903,7 @@ export function App() {
                   sessionsById={activeSessionsById}
                   focusedSessionId={activeTab.focusedSessionId}
                   themeMode={themeMode}
-                  onFocusSession={(sessionId) => {
-                    if (activeTab.focusedSessionId === sessionId) {
-                      return;
-                    }
-
-                    void setFocusedSession({
-                      tabId: activeTab.id,
-                      sessionId,
-                    });
-                  }}
+                  onFocusSession={(sessionId) => focusSessionById(activeTab.id, sessionId)}
                 />
               ) : null}
             </div>
@@ -948,15 +931,13 @@ export function App() {
           projectSortMode={projectSortMode}
           scrollbarMode={scrollbarMode}
           projectHotkeyModifier={projectHotkeyModifier}
-          tabHotkeyModifier={tabHotkeyModifier}
-          supportedHotkeyModifiers={supportedHotkeyModifiers}
+          tabSessionHotkeyModifier={tabSessionHotkeyModifier}
           onClose={() => setSettingsOpen(false)}
           onThemeChange={setThemeMode}
           onTabAlignmentChange={setTabAlignment}
           onProjectSortModeChange={setProjectSortMode}
           onScrollbarModeChange={setScrollbarMode}
           onProjectHotkeyModifierChange={updateProjectHotkeyModifier}
-          onTabHotkeyModifierChange={updateTabHotkeyModifier}
         />
       ) : null}
 
@@ -1307,15 +1288,13 @@ interface SettingsModalProps {
   projectSortMode: ProjectSortMode;
   scrollbarMode: ScrollbarMode;
   projectHotkeyModifier: HotkeyModifier;
-  tabHotkeyModifier: HotkeyModifier;
-  supportedHotkeyModifiers: HotkeyModifier[];
+  tabSessionHotkeyModifier: HotkeyModifier;
   onClose(): void;
   onThemeChange(theme: ThemeMode): void;
   onTabAlignmentChange(alignment: TabAlignment): void;
   onProjectSortModeChange(mode: ProjectSortMode): void;
   onScrollbarModeChange(mode: ScrollbarMode): void;
   onProjectHotkeyModifierChange(modifier: HotkeyModifier): void;
-  onTabHotkeyModifierChange(modifier: HotkeyModifier): void;
 }
 
 interface ShellPickerModalProps {
@@ -1426,15 +1405,13 @@ function SettingsModal({
   projectSortMode,
   scrollbarMode,
   projectHotkeyModifier,
-  tabHotkeyModifier,
-  supportedHotkeyModifiers,
+  tabSessionHotkeyModifier,
   onClose,
   onThemeChange,
   onTabAlignmentChange,
   onProjectSortModeChange,
   onScrollbarModeChange,
   onProjectHotkeyModifierChange,
-  onTabHotkeyModifierChange,
 }: SettingsModalProps) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -1523,15 +1500,16 @@ function SettingsModal({
         <div className="settings-group settings-group--hotkeys">
           <span className="settings-group__label">Hotkeys</span>
           <p className="settings-note">
-            Use 1-9 for the first nine projects or tabs. Use 0 for item 10. Shortcuts
-            stay distinct so project and tab selection never collide. Hold Shift to
-            pass a matching shortcut through to the active shell instead.
+            Use 1-9 for the first nine projects or tabs. Use 0 for item 10. Use Q,
+            W, E, and R for the first four visible panes, and use the arrow keys to
+            move focus between panes in the current layout. Hold Shift to pass a
+            matching shortcut through to the active shell instead.
           </p>
         </div>
         <div className="settings-group">
           <span className="settings-group__label">Project switch modifier</span>
           <div className="theme-toggle">
-            {supportedHotkeyModifiers.map((modifier) => (
+            {AVAILABLE_HOTKEY_MODIFIERS.map((modifier) => (
               <button
                 key={`project-${modifier}`}
                 type="button"
@@ -1549,23 +1527,15 @@ function SettingsModal({
           </p>
         </div>
         <div className="settings-group">
-          <span className="settings-group__label">Tab switch modifier</span>
-          <div className="theme-toggle">
-            {supportedHotkeyModifiers.map((modifier) => (
-              <button
-                key={`tab-${modifier}`}
-                type="button"
-                className={`ghost-button ${tabHotkeyModifier === modifier ? "theme-toggle__active" : ""}`}
-                onClick={() => onTabHotkeyModifierChange(modifier)}
-              >
-                {getModifierLabel(modifier, isMacPlatform)}
-              </button>
-            ))}
-          </div>
+          <span className="settings-group__label">Tab and session switch modifier</span>
           <p className="settings-note">
-            {getIndexedShortcutLabel(tabHotkeyModifier, 1, isMacPlatform)} through{" "}
-            {getIndexedShortcutLabel(tabHotkeyModifier, 10, isMacPlatform)} select tabs
-            in titlebar order.
+            Automatically uses {getModifierLabel(tabSessionHotkeyModifier, isMacPlatform)}.
+            {" "}
+            {getIndexedShortcutLabel(tabSessionHotkeyModifier, 1, isMacPlatform)} through{" "}
+            {getIndexedShortcutLabel(tabSessionHotkeyModifier, 10, isMacPlatform)} select
+            tabs, {getModifierLabel(tabSessionHotkeyModifier, isMacPlatform)}+Q/W/E/R
+            select visible panes, and {getModifierLabel(tabSessionHotkeyModifier, isMacPlatform)}
+            + Arrow keys move focus between panes.
           </p>
         </div>
         <div className="modal__actions">

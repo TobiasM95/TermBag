@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   createLayoutFromPreset,
+  detectLayoutPresetId,
   flattenLayoutLeafSessionIds,
+  getNextLayoutPaneSlot,
   getLayoutPresetLeafCount,
 } from "./layout.js";
 import type { LayoutPresetId } from "./types.js";
@@ -70,5 +72,30 @@ describe("layout presets", () => {
         expect(stackLeft.root.children[0].direction).toBe("column");
       }
     }
+  });
+
+  it.each([
+    ["single", "single"],
+    ["split_horizontal", "split_horizontal"],
+    ["split_vertical", "split_vertical"],
+    ["grid_2x2", "grid_2x2"],
+    ["main_left_stack_right", "main_left_stack_right"],
+    ["stack_left_main_right", "stack_left_main_right"],
+  ] as const)("detects the preset id for %s layouts", (presetId, expectedPresetId) => {
+    const layout = createLayoutFromPreset(presetId, sessionIds);
+
+    expect(detectLayoutPresetId(layout)).toBe(expectedPresetId);
+  });
+
+  it("returns the hardcoded arrow navigation targets for visible panes", () => {
+    expect(getNextLayoutPaneSlot("split_vertical", 0, "right")).toBe(1);
+    expect(getNextLayoutPaneSlot("split_vertical", 1, "left")).toBe(0);
+    expect(getNextLayoutPaneSlot("grid_2x2", 0, "down")).toBe(2);
+    expect(getNextLayoutPaneSlot("grid_2x2", 3, "left")).toBe(2);
+    expect(getNextLayoutPaneSlot("main_left_stack_right", 0, "down")).toBe(2);
+    expect(getNextLayoutPaneSlot("main_left_stack_right", 2, "up")).toBe(1);
+    expect(getNextLayoutPaneSlot("stack_left_main_right", 2, "down")).toBe(1);
+    expect(getNextLayoutPaneSlot("stack_left_main_right", 2, "left")).toBe(0);
+    expect(getNextLayoutPaneSlot("single", 0, "left")).toBeNull();
   });
 });
