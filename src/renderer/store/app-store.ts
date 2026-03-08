@@ -7,8 +7,8 @@ import type {
   Project,
   ProjectWorkspace,
   RenameTabInput,
+  SessionRuntimeSummary,
   ShellProfileAvailability,
-  TabRuntimeSummary,
   TerminalEvent,
   UpdateProjectInput,
 } from "../../shared/types";
@@ -37,7 +37,7 @@ interface AppState {
   closeTab(tabId: string): Promise<void>;
   loadHistory(projectId: string): Promise<void>;
   applyTerminalEvent(event: TerminalEvent): void;
-  setTabRuntime(projectId: string, runtime: TabRuntimeSummary): void;
+  setTabRuntime(projectId: string, runtime: SessionRuntimeSummary): void;
 }
 
 const LAST_ACTIVE_TABS_STORAGE_KEY = "termbag-last-active-tabs";
@@ -66,7 +66,7 @@ function upsertProject(projects: Project[], project: Project): Project[] {
 
 function applyRuntimeToWorkspaces(
   workspaces: Record<string, ProjectWorkspace>,
-  runtime: TabRuntimeSummary,
+  runtime: SessionRuntimeSummary,
 ): Record<string, ProjectWorkspace> {
   const workspace = workspaces[runtime.projectId];
   if (!workspace) {
@@ -77,9 +77,18 @@ function applyRuntimeToWorkspaces(
     ...workspaces,
     [runtime.projectId]: {
       ...workspace,
-      tabs: workspace.tabs.map((tab) =>
-        tab.id === runtime.tabId ? { ...tab, runtime } : tab,
-      ),
+      tabs: workspace.tabs.map((tab) => {
+        if (tab.id !== runtime.tabId) {
+          return tab;
+        }
+
+        return {
+          ...tab,
+          sessions: tab.sessions.map((session) =>
+            session.id === runtime.sessionId ? { ...session, runtime } : session,
+          ),
+        };
+      }),
     },
   };
 }
@@ -404,7 +413,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  setTabRuntime(projectId: string, runtime: TabRuntimeSummary) {
+  setTabRuntime(projectId: string, runtime: SessionRuntimeSummary) {
     set((state) => ({
       workspaces: applyRuntimeToWorkspaces(state.workspaces, {
         ...runtime,

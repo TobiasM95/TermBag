@@ -1,18 +1,18 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC_CHANNELS } from "../shared/ipc.js";
 import type {
-  ActivateTabInput,
+  ActivateSessionInput,
   BootstrapData,
   CreateProjectInput,
   CreateTabInput,
   HistoryEntry,
   HistoryQuery,
-  HydratedTabSession,
+  HydratedSession,
   ProjectWorkspace,
   RenameTabInput,
   RecallHistoryInput,
   RecallHistoryResult,
-  ResizeTabInput,
+  ResizeSessionInput,
   TermBagApi,
   TerminalEvent,
   UpdateProjectInput,
@@ -42,14 +42,14 @@ const api: TermBagApi = {
     ipcRenderer.invoke(IPC_CHANNELS.renameTab, input) as Promise<ProjectWorkspace>,
   closeTab: (tabId) =>
     ipcRenderer.invoke(IPC_CHANNELS.closeTab, tabId) as Promise<ProjectWorkspace>,
-  activateTab: (input: ActivateTabInput) =>
-    ipcRenderer.invoke(IPC_CHANNELS.activateTab, input) as Promise<HydratedTabSession>,
-  resizeTab: (input: ResizeTabInput) =>
-    ipcRenderer.invoke(IPC_CHANNELS.resizeTab, input) as Promise<void>,
-  writeToTab: (tabId: string, data: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.writeToTab, tabId, data) as Promise<void>,
-  restartTab: (input: ActivateTabInput) =>
-    ipcRenderer.invoke(IPC_CHANNELS.restartTab, input) as Promise<HydratedTabSession>,
+  activateSession: (input: ActivateSessionInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.activateSession, input) as Promise<HydratedSession>,
+  resizeSession: (input: ResizeSessionInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.resizeSession, input) as Promise<void>,
+  writeToSession: (sessionId: string, data: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.writeToSession, sessionId, data) as Promise<void>,
+  restartSession: (input: ActivateSessionInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.restartSession, input) as Promise<HydratedSession>,
   listHistory: (query: HistoryQuery) =>
     ipcRenderer.invoke(IPC_CHANNELS.listHistory, query) as Promise<HistoryEntry[]>,
   recallHistory: (input: RecallHistoryInput) =>

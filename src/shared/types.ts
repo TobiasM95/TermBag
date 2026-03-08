@@ -25,22 +25,53 @@ export interface ShellProfileAvailability extends ShellProfile {
   available: boolean;
 }
 
-export interface SavedTerminalTab {
+export interface LayoutLeafNode {
+  id: string;
+  kind: "leaf";
+  sessionId: string;
+}
+
+export interface LayoutSplitNode {
+  id: string;
+  kind: "split";
+  direction: "row" | "column";
+  sizes: number[];
+  children: TabLayoutNode[];
+}
+
+export type TabLayoutNode = LayoutLeafNode | LayoutSplitNode;
+
+export interface PersistedTabLayout {
+  version: 1;
+  root: TabLayoutNode;
+}
+
+export interface SavedWorkspaceTab {
   id: string;
   projectId: string;
-  shellProfileId: string;
   title: string;
   customTitle: string | null;
   restoreOrder: number;
-  lastKnownCwd: string | null;
+  layout: PersistedTabLayout;
+  focusedSessionId: string;
   wasOpen: boolean;
   lastActivatedAt: string;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface TerminalSnapshot {
+export interface SavedTerminalSession {
+  id: string;
   tabId: string;
+  shellProfileId: string;
+  lastKnownCwd: string | null;
+  sessionOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TerminalSnapshot {
+  sessionId: string;
   snapshotFormat: SnapshotFormat;
   transcriptText: string;
   byteCount: number;
@@ -51,6 +82,7 @@ export interface HistoryEntry {
   id: string;
   projectId: string;
   tabId: string | null;
+  sessionId: string | null;
   shellProfileId: string;
   cwd: string | null;
   commandText: string;
@@ -64,7 +96,8 @@ export type RuntimeStatus =
   | "exited"
   | "error";
 
-export interface TabRuntimeSummary {
+export interface SessionRuntimeSummary {
+  sessionId: string;
   tabId: string;
   projectId: string;
   started: boolean;
@@ -80,8 +113,12 @@ export interface TabRuntimeSummary {
   shellProfileId: string;
 }
 
-export interface WorkspaceTab extends SavedTerminalTab {
-  runtime: TabRuntimeSummary | null;
+export interface WorkspaceSession extends SavedTerminalSession {
+  runtime: SessionRuntimeSummary | null;
+}
+
+export interface WorkspaceTab extends SavedWorkspaceTab {
+  sessions: WorkspaceSession[];
   rootPathMissing: boolean;
 }
 
@@ -114,14 +151,14 @@ export interface RenameTabInput {
   title: string;
 }
 
-export interface ActivateTabInput {
-  tabId: string;
+export interface ActivateSessionInput {
+  sessionId: string;
   cols: number;
   rows: number;
 }
 
-export interface ResizeTabInput {
-  tabId: string;
+export interface ResizeSessionInput {
+  sessionId: string;
   cols: number;
   rows: number;
 }
@@ -132,13 +169,13 @@ export interface HistoryQuery {
 }
 
 export interface RecallHistoryInput {
-  tabId: string;
+  sessionId: string;
   commandText: string;
 }
 
-export interface HydratedTabSession {
-  tabId: string;
-  runtime: TabRuntimeSummary;
+export interface HydratedSession {
+  sessionId: string;
+  runtime: SessionRuntimeSummary;
   serializedState: string;
   replayRevision: number;
 }
@@ -146,14 +183,16 @@ export interface HydratedTabSession {
 export type TerminalEvent =
   | {
       type: "output";
+      sessionId: string;
       tabId: string;
       data: string;
       sequence: number;
     }
   | {
       type: "status";
+      sessionId: string;
       tabId: string;
-      runtime: TabRuntimeSummary;
+      runtime: SessionRuntimeSummary;
     };
 
 export interface BootstrapData {
@@ -180,10 +219,10 @@ export interface TermBagApi {
   createTab(input: CreateTabInput): Promise<ProjectWorkspace>;
   renameTab(input: RenameTabInput): Promise<ProjectWorkspace>;
   closeTab(tabId: string): Promise<ProjectWorkspace>;
-  activateTab(input: ActivateTabInput): Promise<HydratedTabSession>;
-  resizeTab(input: ResizeTabInput): Promise<void>;
-  writeToTab(tabId: string, data: string): Promise<void>;
-  restartTab(input: ActivateTabInput): Promise<HydratedTabSession>;
+  activateSession(input: ActivateSessionInput): Promise<HydratedSession>;
+  resizeSession(input: ResizeSessionInput): Promise<void>;
+  writeToSession(sessionId: string, data: string): Promise<void>;
+  restartSession(input: ActivateSessionInput): Promise<HydratedSession>;
   listHistory(query: HistoryQuery): Promise<HistoryEntry[]>;
   recallHistory(input: RecallHistoryInput): Promise<RecallHistoryResult>;
   onTerminalEvent(listener: (event: TerminalEvent) => void): () => void;

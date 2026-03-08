@@ -1,20 +1,25 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import { collectLayoutSessionIds, createSingleLeafLayout, findFirstLayoutSessionId } from "../../shared/layout.js";
 import { deriveTabTitle, normalizeWindowsPath } from "../../shared/paths.js";
 import type {
-  ActivateTabInput,
+  ActivateSessionInput,
   BootstrapData,
   CreateProjectInput,
   CreateTabInput,
   HistoryEntry,
-  HydratedTabSession,
+  HydratedSession,
   Project,
   ProjectWorkspace,
   RenameTabInput,
   RecallHistoryResult,
+  SavedTerminalSession,
+  SavedWorkspaceTab,
+  SessionRuntimeSummary,
   ShellProfile,
   ShellProfileAvailability,
   UpdateProjectInput,
+  WorkspaceSession,
   WorkspaceTab,
 } from "../../shared/types.js";
 import { DatabaseService } from "./database.js";
@@ -45,10 +50,15 @@ export class AppService {
   getProjectWorkspace(projectId: string): ProjectWorkspace {
     const project = this.requireProject(projectId);
     const rootPathMissing = this.isConfiguredProjectRootMissing(project);
-    const tabs = this.database.listTabsForProject(projectId);
+    const tabs = this.database.listTabsForProject(projectId).map((tab) =>
+      this.normalizeTabState(tab),
+    );
     const workspaceTabs: WorkspaceTab[] = tabs.map((tab) => ({
       ...tab,
-      runtime: this.ptyManager.getRuntimeSummary(tab.id),
+      sessions: this.database.listSessionsForTab(tab.id).map((session) => ({
+        ...session,
+        runtime: this.ptyManager.getRuntimeSummary(session.id),
+      })),
       rootPathMissing,
     }));
 
@@ -102,28 +112,38 @@ export class AppService {
     const shellProfileId = input.shellProfileId ?? project.defaultShellProfileId;
     const shellProfile = this.requireShellProfile(shellProfileId);
     const cwd = this.resolveProjectDefaultCwd(project);
+    const tabId = crypto.randomUUID();
+    const sessionId = crypto.randomUUID();
 
-    this.database.createTab({
-      id: crypto.randomUUID(),
-      projectId: project.id,
-      shellProfileId,
-      title: deriveTabTitle(cwd, shellProfile.label),
-      restoreOrder: this.database.getMaxRestoreOrder(project.id) + 1,
-      lastKnownCwd: cwd,
+    this.database.createTabWithInitialSession({
+      tab: {
+        id: tabId,
+        projectId: project.id,
+        title: deriveTabTitle(cwd, shellProfile.label),
+        customTitle: null,
+        restoreOrder: this.database.getMaxRestoreOrder(project.id) + 1,
+        layout: createSingleLeafLayout(sessionId, `${sessionId}:root`),
+        focusedSessionId: sessionId,
+      },
+      session: {
+        id: sessionId,
+        tabId,
+        shellProfileId,
+        lastKnownCwd: cwd,
+        sessionOrder: 1,
+      },
     });
     return this.getProjectWorkspace(project.id);
   }
 
   renameTab(input: RenameTabInput): ProjectWorkspace {
-    const tab = this.requireTab(input.tabId);
-    const shellProfile = this.requireShellProfile(tab.shellProfileId);
+    const tab = this.normalizeTabState(this.requireTab(input.tabId));
     const nextCustomTitle = input.title.trim();
+    const sessions = this.requireSessionsForTab(tab.id);
 
     this.database.updateTab({
       ...tab,
-      title:
-        nextCustomTitle ||
-        deriveTabTitle(tab.lastKnownCwd, shellProfile.label),
+      title: nextCustomTitle || this.deriveAutomaticTabTitle(tab, sessions),
       customTitle: nextCustomTitle || null,
     });
 
@@ -141,43 +161,52 @@ export class AppService {
     return this.getProjectWorkspace(tab.projectId);
   }
 
-  async activateTab(input: ActivateTabInput): Promise<HydratedTabSession> {
-    const tab = this.requireTab(input.tabId);
+  async activateSession(input: ActivateSessionInput): Promise<HydratedSession> {
+    const session = this.requireSession(input.sessionId);
+    const tab = this.normalizeTabState(this.requireTab(session.tabId));
     const project = this.requireProject(tab.projectId);
-    const shellProfile = this.requireShellProfile(tab.shellProfileId);
+    const shellProfile = this.requireShellProfile(session.shellProfileId);
     this.database.markTabActivated(tab.id);
 
-    const activated = await this.ptyManager.activateTab(
+    const activated = await this.ptyManager.activateSession(
       input,
       project,
-      this.requireTab(input.tabId),
+      this.requireTab(tab.id),
+      this.requireSession(session.id),
       shellProfile,
     );
 
     return {
-      tabId: input.tabId,
+      sessionId: input.sessionId,
       runtime: activated.runtime,
       serializedState: activated.serializedState,
       replayRevision: activated.replayRevision,
     };
   }
 
-  resizeTab(tabId: string, cols: number, rows: number): void {
-    this.ptyManager.resizeTab(tabId, cols, rows);
+  resizeSession(sessionId: string, cols: number, rows: number): void {
+    this.ptyManager.resizeSession(sessionId, cols, rows);
   }
 
-  writeToTab(tabId: string, data: string): void {
-    this.ptyManager.writeToTab(tabId, data);
+  writeToSession(sessionId: string, data: string): void {
+    this.ptyManager.writeToSession(sessionId, data);
   }
 
-  async restartTab(input: ActivateTabInput): Promise<HydratedTabSession> {
-    const tab = this.requireTab(input.tabId);
+  async restartSession(input: ActivateSessionInput): Promise<HydratedSession> {
+    const session = this.requireSession(input.sessionId);
+    const tab = this.normalizeTabState(this.requireTab(session.tabId));
     const project = this.requireProject(tab.projectId);
-    const shellProfile = this.requireShellProfile(tab.shellProfileId);
-    const restarted = await this.ptyManager.restartTab(input, project, tab, shellProfile);
+    const shellProfile = this.requireShellProfile(session.shellProfileId);
+    const restarted = await this.ptyManager.restartSession(
+      input,
+      project,
+      tab,
+      session,
+      shellProfile,
+    );
 
     return {
-      tabId: tab.id,
+      sessionId: session.id,
       runtime: restarted.runtime,
       serializedState: restarted.serializedState,
       replayRevision: restarted.replayRevision,
@@ -189,8 +218,8 @@ export class AppService {
     return this.database.listHistoryForProject(projectId, limit);
   }
 
-  recallHistory(tabId: string, commandText: string): RecallHistoryResult {
-    return this.ptyManager.recallHistory(tabId, commandText);
+  recallHistory(sessionId: string, commandText: string): RecallHistoryResult {
+    return this.ptyManager.recallHistory(sessionId, commandText);
   }
 
   shutdown(): void {
@@ -206,14 +235,67 @@ export class AppService {
   private createInitialTab(project: Project, shellProfileId: string): void {
     const shellProfile = this.requireShellProfile(shellProfileId);
     const cwd = this.resolveProjectDefaultCwd(project);
-    this.database.createTab({
-      id: crypto.randomUUID(),
-      projectId: project.id,
-      shellProfileId,
-      title: deriveTabTitle(cwd, shellProfile.label),
-      restoreOrder: 1,
-      lastKnownCwd: cwd,
+    const tabId = crypto.randomUUID();
+    const sessionId = crypto.randomUUID();
+
+    this.database.createTabWithInitialSession({
+      tab: {
+        id: tabId,
+        projectId: project.id,
+        title: deriveTabTitle(cwd, shellProfile.label),
+        customTitle: null,
+        restoreOrder: 1,
+        layout: createSingleLeafLayout(sessionId, `${sessionId}:root`),
+        focusedSessionId: sessionId,
+      },
+      session: {
+        id: sessionId,
+        tabId,
+        shellProfileId,
+        lastKnownCwd: cwd,
+        sessionOrder: 1,
+      },
     });
+  }
+
+  private normalizeTabState(tab: SavedWorkspaceTab): SavedWorkspaceTab {
+    const sessions = this.requireSessionsForTab(tab.id);
+    const sessionIds = new Set(sessions.map((session) => session.id));
+    const hasValidFocusedSession = sessionIds.has(tab.focusedSessionId);
+    const layoutSessionIds = collectLayoutSessionIds(tab.layout);
+    const hasValidLayout =
+      layoutSessionIds.length > 0 && layoutSessionIds.every((sessionId) => sessionIds.has(sessionId));
+    const focusedSessionId =
+      tab.focusedSessionId ||
+      findFirstLayoutSessionId(tab.layout) ||
+      sessions[0]!.id;
+    const normalizedFocusedSessionId = hasValidFocusedSession ? focusedSessionId : sessions[0]!.id;
+    const normalizedLayout = hasValidLayout
+      ? tab.layout
+      : createSingleLeafLayout(normalizedFocusedSessionId, `${normalizedFocusedSessionId}:root`);
+
+    if (
+      normalizedFocusedSessionId === tab.focusedSessionId &&
+      normalizedLayout === tab.layout
+    ) {
+      return tab;
+    }
+
+    return this.database.updateTab({
+      ...tab,
+      focusedSessionId: normalizedFocusedSessionId,
+      layout: normalizedLayout,
+    });
+  }
+
+  private deriveAutomaticTabTitle(
+    tab: SavedWorkspaceTab,
+    sessions: SavedTerminalSession[],
+  ): string {
+    const focusedSession =
+      sessions.find((session) => session.id === tab.focusedSessionId) ?? sessions[0]!;
+    const shellProfile = this.requireShellProfile(focusedSession.shellProfileId);
+    return deriveTabTitle(focusedSession.lastKnownCwd, shellProfile.label);
   }
 
   private requireProject(projectId: string): Project {
@@ -224,12 +306,28 @@ export class AppService {
     return project;
   }
 
-  private requireTab(tabId: string) {
+  private requireTab(tabId: string): SavedWorkspaceTab {
     const tab = this.database.getTab(tabId);
     if (!tab) {
       throw new Error(`Tab not found: ${tabId}`);
     }
     return tab;
+  }
+
+  private requireSession(sessionId: string): SavedTerminalSession {
+    const session = this.database.getSession(sessionId);
+    if (!session) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+    return session;
+  }
+
+  private requireSessionsForTab(tabId: string): SavedTerminalSession[] {
+    const sessions = this.database.listSessionsForTab(tabId);
+    if (sessions.length === 0) {
+      throw new Error(`Tab has no sessions: ${tabId}`);
+    }
+    return sessions;
   }
 
   private requireShellProfile(shellProfileId: string): ShellProfile {

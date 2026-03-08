@@ -6,6 +6,7 @@ import type {
   Project,
   ShellProfileAvailability,
   UpdateProjectInput,
+  WorkspaceSession,
   WorkspaceTab,
 } from "../shared/types";
 
@@ -382,6 +383,18 @@ export function App() {
     );
   }, [selectedWorkspace]);
 
+  const activeSession = useMemo<WorkspaceSession | null>(() => {
+    if (!activeTab) {
+      return null;
+    }
+
+    return (
+      activeTab.sessions.find((session) => session.id === activeTab.focusedSessionId) ??
+      activeTab.sessions[0] ??
+      null
+    );
+  }, [activeTab]);
+
   useEffect(() => {
     if (
       selectedWorkspace &&
@@ -475,7 +488,7 @@ export function App() {
         return;
       }
 
-      if (!selectedProjectId || !activeTab) {
+      if (!selectedProjectId || !activeTab || !activeSession) {
         return;
       }
 
@@ -488,6 +501,7 @@ export function App() {
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [
+    activeSession,
     activeTab,
     historyOpen,
     loadHistory,
@@ -746,10 +760,11 @@ export function App() {
 
           {selectedProject && selectedWorkspace ? (
             <div className="workspace-session">
-              {activeTab ? (
+              {activeTab && activeSession ? (
                 <TerminalPane
                   project={selectedProject}
                   tab={activeTab}
+                  session={activeSession}
                   themeMode={themeMode}
                 />
               ) : null}
@@ -851,7 +866,7 @@ export function App() {
         />
       ) : null}
 
-      {historyOpen && selectedProject && activeTab ? (
+      {historyOpen && selectedProject && activeTab && activeSession ? (
         <HistoryOverlay
           activeTabId={activeTab.id}
           entries={historyEntries}
@@ -861,7 +876,7 @@ export function App() {
           onClose={() => setHistoryOpen(false)}
           onSelect={async (commandText) => {
             const result = await window.termbag.recallHistory({
-              tabId: activeTab.id,
+              sessionId: activeSession.id,
               commandText,
             });
             if (result.applied) {

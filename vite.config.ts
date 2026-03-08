@@ -12,7 +12,8 @@ export default defineConfig({
     },
   },
   test: {
-    exclude: ["dist/**", "dist-electron/**", "node_modules/**"],
+    include: ["src/**/*.test.ts"],
+    exclude: ["dist/**", "dist-electron/**", "node_modules/**", "release/**"],
   },
   build: {
     outDir: "dist",

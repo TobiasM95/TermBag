@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import type { Project, WorkspaceTab } from "../../shared/types";
+import type { Project, WorkspaceSession, WorkspaceTab } from "../../shared/types";
 import { isSameTerminalSize, type TerminalSize } from "../../shared/terminal-size";
 import { useAppStore } from "../store/app-store";
 
 interface TerminalPaneProps {
   project: Project;
   tab: WorkspaceTab;
+  session: WorkspaceSession;
   themeMode: "dark" | "light";
 }
 
@@ -40,7 +41,7 @@ function isPasteShortcut(event: KeyboardEvent): boolean {
   return (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "v";
 }
 
-export function TerminalPane({ project, tab, themeMode }: TerminalPaneProps) {
+export function TerminalPane({ project, tab, session, themeMode }: TerminalPaneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const restartRequestedRef = useRef(false);
   const hydrationCompleteRef = useRef(false);
@@ -169,8 +170,8 @@ export function TerminalPane({ project, tab, themeMode }: TerminalPaneProps) {
       }
 
       lastSentSizeRef.current = size;
-      void window.termbag.resizeTab({
-        tabId: tab.id,
+      void window.termbag.resizeSession({
+        sessionId: session.id,
         cols: size.cols,
         rows: size.rows,
       });
@@ -184,7 +185,7 @@ export function TerminalPane({ project, tab, themeMode }: TerminalPaneProps) {
     lastSentSizeRef.current = null;
 
     const disposeOutput = window.termbag.onTerminalEvent((event) => {
-      if (event.type === "output" && event.tabId === tab.id) {
+      if (event.type === "output" && event.sessionId === session.id) {
         if (!hydrationCompleteRef.current) {
           pendingOutputRef.current.push({
             data: event.data,
@@ -203,7 +204,7 @@ export function TerminalPane({ project, tab, themeMode }: TerminalPaneProps) {
     });
 
     const disposeInput = terminal.onData((data) => {
-      void window.termbag.writeToTab(tab.id, data).catch((error: unknown) => {
+      void window.termbag.writeToSession(session.id, data).catch((error: unknown) => {
         setLocalError(error instanceof Error ? error.message : "Failed to send input.");
       });
     });
@@ -214,13 +215,13 @@ export function TerminalPane({ project, tab, themeMode }: TerminalPaneProps) {
     const hydrate = async () => {
       setLocalError(null);
       const response = shouldRestart
-        ? await window.termbag.restartTab({
-            tabId: tab.id,
+        ? await window.termbag.restartSession({
+            sessionId: session.id,
             cols: initialSize.cols,
             rows: initialSize.rows,
           })
-        : await window.termbag.activateTab({
-            tabId: tab.id,
+        : await window.termbag.activateSession({
+            sessionId: session.id,
             cols: initialSize.cols,
             rows: initialSize.rows,
           });
@@ -256,7 +257,7 @@ export function TerminalPane({ project, tab, themeMode }: TerminalPaneProps) {
         const fittedSize = fitTerminal();
         sendResizeIfNeeded(fittedSize);
       });
-      resizeObserver.observe(hostRef.current);
+      resizeObserver.observe(hostRef.current!);
       await nextFrame();
       const settledSize = fitTerminal();
       sendResizeIfNeeded(settledSize);
@@ -283,9 +284,9 @@ export function TerminalPane({ project, tab, themeMode }: TerminalPaneProps) {
       disposeInput.dispose();
       terminal.dispose();
     };
-  }, [project.id, sessionRevision, setTabRuntime, tab.id, themeMode]);
+  }, [project.id, session.id, sessionRevision, setTabRuntime, themeMode]);
 
-  const runtime = tab.runtime;
+  const runtime = session.runtime;
   const showRestart = runtime?.status === "exited" || runtime?.status === "error";
 
   return (

@@ -11,13 +11,13 @@ import {
 } from "electron";
 import { IPC_CHANNELS } from "../shared/ipc.js";
 import type {
-  ActivateTabInput,
+  ActivateSessionInput,
   CreateProjectInput,
   CreateTabInput,
   HistoryQuery,
   RenameTabInput,
   RecallHistoryInput,
-  ResizeTabInput,
+  ResizeSessionInput,
   UpdateProjectInput,
 } from "../shared/types.js";
 import { describeStartupFailure } from "./startup-errors.js";
@@ -37,12 +37,12 @@ interface AppServiceContract {
   createTab(input: CreateTabInput): unknown;
   renameTab(input: RenameTabInput): unknown;
   closeTab(tabId: string): unknown;
-  activateTab(input: ActivateTabInput): unknown;
-  resizeTab(tabId: string, cols: number, rows: number): void;
-  writeToTab(tabId: string, data: string): void;
-  restartTab(input: ActivateTabInput): unknown;
+  activateSession(input: ActivateSessionInput): unknown;
+  resizeSession(sessionId: string, cols: number, rows: number): void;
+  writeToSession(sessionId: string, data: string): void;
+  restartSession(input: ActivateSessionInput): unknown;
   listHistory(projectId: string, limit?: number): unknown;
-  recallHistory(tabId: string, commandText: string): unknown;
+  recallHistory(sessionId: string, commandText: string): unknown;
   prepareForQuit(): Promise<void>;
   shutdown(): void;
 }
@@ -169,23 +169,23 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.closeTab, (_event, tabId: string) =>
     appService!.closeTab(tabId),
   );
-  ipcMain.handle(IPC_CHANNELS.activateTab, (_event, input: ActivateTabInput) =>
-    appService!.activateTab(input),
+  ipcMain.handle(IPC_CHANNELS.activateSession, (_event, input: ActivateSessionInput) =>
+    appService!.activateSession(input),
   );
-  ipcMain.handle(IPC_CHANNELS.resizeTab, (_event, input: ResizeTabInput) => {
-    appService!.resizeTab(input.tabId, input.cols, input.rows);
+  ipcMain.handle(IPC_CHANNELS.resizeSession, (_event, input: ResizeSessionInput) => {
+    appService!.resizeSession(input.sessionId, input.cols, input.rows);
   });
-  ipcMain.handle(IPC_CHANNELS.writeToTab, (_event, tabId: string, data: string) => {
-    appService!.writeToTab(tabId, data);
+  ipcMain.handle(IPC_CHANNELS.writeToSession, (_event, sessionId: string, data: string) => {
+    appService!.writeToSession(sessionId, data);
   });
-  ipcMain.handle(IPC_CHANNELS.restartTab, (_event, input: ActivateTabInput) =>
-    appService!.restartTab(input),
+  ipcMain.handle(IPC_CHANNELS.restartSession, (_event, input: ActivateSessionInput) =>
+    appService!.restartSession(input),
   );
   ipcMain.handle(IPC_CHANNELS.listHistory, (_event, query: HistoryQuery) =>
     appService!.listHistory(query.projectId, query.limit),
   );
   ipcMain.handle(IPC_CHANNELS.recallHistory, (_event, input: RecallHistoryInput) =>
-    appService!.recallHistory(input.tabId, input.commandText),
+    appService!.recallHistory(input.sessionId, input.commandText),
   );
 }
 

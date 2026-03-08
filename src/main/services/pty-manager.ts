@@ -22,12 +22,13 @@ import {
 } from "../../shared/testable.js";
 import { deriveTabTitle } from "../../shared/paths.js";
 import type {
-  ActivateTabInput,
+  ActivateSessionInput,
   Project,
   RecallHistoryResult,
-  SavedTerminalTab,
+  SavedTerminalSession,
+  SavedWorkspaceTab,
+  SessionRuntimeSummary,
   ShellProfile,
-  TabRuntimeSummary,
   TerminalEvent,
 } from "../../shared/types.js";
 import { DatabaseService } from "./database.js";
@@ -41,14 +42,15 @@ import {
 const { Terminal: HeadlessTerminal } = xtermHeadlessPackage;
 const { SerializeAddon } = xtermSerializePackage;
 
-interface RuntimeTab {
+interface RuntimeSession {
+  sessionId: string;
   tabId: string;
   projectId: string;
   shellProfileId: string;
   pty: IPty | null;
   headless: InstanceType<typeof HeadlessTerminal>;
   serializer: InstanceType<typeof SerializeAddon>;
-  status: TabRuntimeSummary["status"];
+  status: SessionRuntimeSummary["status"];
   pid: number | null;
   exitCode: number | null;
   errorMessage: string | null;
@@ -84,7 +86,7 @@ function writeTerminalData(terminal: TerminalWriter, data: string): Promise<void
   });
 }
 
-function serializeTerminal(runtime: RuntimeTab): string {
+function serializeTerminal(runtime: RuntimeSession): string {
   const serializedState = runtime.serializer.serialize({
     excludeAltBuffer: true,
     scrollback: SNAPSHOT_SCROLLBACK,
@@ -94,7 +96,7 @@ function serializeTerminal(runtime: RuntimeTab): string {
 }
 
 export class PtyManager {
-  private readonly runtimes = new Map<string, RuntimeTab>();
+  private readonly runtimes = new Map<string, RuntimeSession>();
 
   constructor(
     private readonly database: DatabaseService,
@@ -104,22 +106,23 @@ export class PtyManager {
     cleanupStaleBootstrapFiles();
   }
 
-  getRuntimeSummary(tabId: string): TabRuntimeSummary | null {
-    const runtime = this.runtimes.get(tabId);
+  getRuntimeSummary(sessionId: string): SessionRuntimeSummary | null {
+    const runtime = this.runtimes.get(sessionId);
     return runtime ? this.toRuntimeSummary(runtime) : null;
   }
 
-  async activateTab(
-    input: ActivateTabInput,
+  async activateSession(
+    input: ActivateSessionInput,
     project: Project,
-    tab: SavedTerminalTab,
+    tab: SavedWorkspaceTab,
+    session: SavedTerminalSession,
     shellProfile: ShellProfile,
   ): Promise<{
-    runtime: TabRuntimeSummary;
+    runtime: SessionRuntimeSummary;
     serializedState: string;
     replayRevision: number;
   }> {
-    const existing = this.runtimes.get(tab.id);
+    const existing = this.runtimes.get(session.id);
     if (existing) {
       this.resizeRuntime(existing, input.cols, input.rows);
       const replay = await this.captureReplayState(existing);
@@ -130,26 +133,30 @@ export class PtyManager {
       };
     }
 
-    const desiredCwd = this.resolveSpawnCwd(project, tab);
-    const persistedSnapshot = this.database.getSnapshot(tab.id);
+    const desiredCwd = this.resolveSpawnCwd(project, session);
+    const persistedSnapshot = this.database.getSnapshot(session.id);
     const bootstrapAssets =
       persistedSnapshot?.snapshotFormat === SNAPSHOT_FORMAT &&
       persistedSnapshot.transcriptText
         ? createShellBootstrapAssets(shellProfile, persistedSnapshot.transcriptText)
         : null;
-    const runtime = this.createRuntime(tab, shellProfile, { cols: input.cols, rows: input.rows }, {
-      currentCwd: desiredCwd,
-      supportsIntegration: shellProfile.supportsIntegration,
-      suppressInitialRenderNoise: Boolean(persistedSnapshot?.transcriptText),
-      bootstrapCleanupPaths: bootstrapAssets?.cleanupPaths ?? [],
-    });
-    this.runtimes.set(tab.id, runtime);
+    const runtime = this.createRuntime(
+      project.id,
+      tab,
+      session,
+      shellProfile,
+      { cols: input.cols, rows: input.rows },
+      {
+        currentCwd: desiredCwd,
+        supportsIntegration: shellProfile.supportsIntegration,
+        suppressInitialRenderNoise: Boolean(persistedSnapshot?.transcriptText),
+        bootstrapCleanupPaths: bootstrapAssets?.cleanupPaths ?? [],
+      },
+    );
+    this.runtimes.set(session.id, runtime);
 
     try {
-      const launch = this.shellCatalog.resolveLaunch(
-        shellProfile,
-        bootstrapAssets?.scriptPath,
-      );
+      const launch = this.shellCatalog.resolveLaunch(shellProfile, bootstrapAssets?.scriptPath);
       const pty = spawn(launch.executable, launch.args, {
         cols: input.cols,
         rows: input.rows,
@@ -172,10 +179,10 @@ export class PtyManager {
       }
 
       pty.onData((chunk) => {
-        void this.handleData(tab, shellProfile, runtime, chunk);
+        void this.handleData(tab, session, shellProfile, runtime, chunk);
       });
       pty.onExit(({ exitCode }) => {
-        if (!this.runtimes.has(runtime.tabId)) {
+        if (!this.runtimes.has(runtime.sessionId)) {
           return;
         }
 
@@ -208,8 +215,8 @@ export class PtyManager {
     };
   }
 
-  resizeTab(tabId: string, cols: number, rows: number): void {
-    const runtime = this.runtimes.get(tabId);
+  resizeSession(sessionId: string, cols: number, rows: number): void {
+    const runtime = this.runtimes.get(sessionId);
     if (!runtime) {
       return;
     }
@@ -217,8 +224,8 @@ export class PtyManager {
     this.resizeRuntime(runtime, cols, rows);
   }
 
-  writeToTab(tabId: string, data: string): void {
-    const runtime = this.runtimes.get(tabId);
+  writeToSession(sessionId: string, data: string): void {
+    const runtime = this.runtimes.get(sessionId);
     if (!runtime?.pty || runtime.status !== "running") {
       return;
     }
@@ -243,7 +250,8 @@ export class PtyManager {
         this.database.addHistoryEntry({
           id: crypto.randomUUID(),
           projectId: runtime.projectId,
-          tabId,
+          tabId: runtime.tabId,
+          sessionId,
           shellProfileId: runtime.shellProfileId,
           cwd: runtime.currentCwd,
           commandText: priorBuffer,
@@ -252,18 +260,15 @@ export class PtyManager {
       }
 
       if (runtime.shellProfileId === "cmd") {
-        runtime.currentCwd = inferCmdCwdFromSubmittedCommand(
-          runtime.currentCwd,
-          priorBuffer,
-        );
+        runtime.currentCwd = inferCmdCwdFromSubmittedCommand(runtime.currentCwd, priorBuffer);
       }
     }
 
     this.emitStatus(runtime);
   }
 
-  recallHistory(tabId: string, commandText: string): RecallHistoryResult {
-    const runtime = this.runtimes.get(tabId);
+  recallHistory(sessionId: string, commandText: string): RecallHistoryResult {
+    const runtime = this.runtimes.get(sessionId);
     if (!runtime?.pty || runtime.status !== "running") {
       return {
         applied: false,
@@ -299,27 +304,32 @@ export class PtyManager {
     };
   }
 
-  async restartTab(
-    input: ActivateTabInput,
+  async restartSession(
+    input: ActivateSessionInput,
     project: Project,
-    tab: SavedTerminalTab,
+    tab: SavedWorkspaceTab,
+    session: SavedTerminalSession,
     shellProfile: ShellProfile,
   ): Promise<{
-    runtime: TabRuntimeSummary;
+    runtime: SessionRuntimeSummary;
     serializedState: string;
     replayRevision: number;
   }> {
-    await this.disposeRuntime(tab.id, false);
-    return this.activateTab(input, project, tab, shellProfile);
+    await this.disposeRuntime(session.id, false);
+    return this.activateSession(input, project, tab, session, shellProfile);
   }
 
   closeTab(tabId: string): void {
-    void this.disposeRuntime(tabId, true);
+    for (const runtime of [...this.runtimes.values()]) {
+      if (runtime.tabId === tabId) {
+        void this.disposeRuntime(runtime.sessionId, true);
+      }
+    }
   }
 
   shutdown(): void {
-    for (const tabId of this.runtimes.keys()) {
-      void this.disposeRuntime(tabId, true);
+    for (const sessionId of this.runtimes.keys()) {
+      void this.disposeRuntime(sessionId, true);
     }
   }
 
@@ -336,11 +346,13 @@ export class PtyManager {
   }
 
   private createRuntime(
-    tab: SavedTerminalTab,
+    projectId: string,
+    tab: SavedWorkspaceTab,
+    session: SavedTerminalSession,
     shellProfile: ShellProfile,
     dimensions: { cols: number; rows: number },
-    overrides?: Partial<RuntimeTab>,
-  ): RuntimeTab {
+    overrides?: Partial<RuntimeSession>,
+  ): RuntimeSession {
     const headless = new HeadlessTerminal({
       allowProposedApi: true,
       cols: dimensions.cols,
@@ -352,9 +364,10 @@ export class PtyManager {
     headless.loadAddon(serializer);
 
     return {
+      sessionId: session.id,
       tabId: tab.id,
-      projectId: tab.projectId,
-      shellProfileId: tab.shellProfileId,
+      projectId,
+      shellProfileId: session.shellProfileId,
       pty: null,
       headless,
       serializer,
@@ -366,7 +379,7 @@ export class PtyManager {
       currentInputBuffer: INITIAL_INPUT_TRACKING_STATE.currentInputBuffer,
       alternateScreenActive: false,
       suppressInitialRenderNoise: true,
-      currentCwd: tab.lastKnownCwd,
+      currentCwd: session.lastKnownCwd,
       flushTimer: null,
       supportsIntegration: shellProfile.supportsIntegration,
       operationQueue: Promise.resolve(),
@@ -381,17 +394,18 @@ export class PtyManager {
   }
 
   private async handleData(
-    tab: SavedTerminalTab,
+    tab: SavedWorkspaceTab,
+    session: SavedTerminalSession,
     shellProfile: ShellProfile,
-    runtime: RuntimeTab,
+    runtime: RuntimeSession,
     chunk: string,
   ): Promise<void> {
-    if (!this.runtimes.has(runtime.tabId)) {
+    if (!this.runtimes.has(runtime.sessionId)) {
       return;
     }
 
     const parsed = parseIntegrationChunk(chunk);
-    let displayData = runtime.suppressInitialRenderNoise
+    const displayData = runtime.suppressInitialRenderNoise
       ? stripInitialTerminalNoise(parsed.sanitized)
       : parsed.sanitized;
 
@@ -408,14 +422,14 @@ export class PtyManager {
 
     for (const cwd of parsed.cwdSignals) {
       runtime.currentCwd = cwd;
-      this.persistCwdAndTitle(tab, shellProfile, cwd);
+      this.persistCwdAndTitle(tab, session, shellProfile, cwd);
     }
 
     if (shellProfile.id === "cmd") {
       const inferred = inferCmdPromptCwdFromOutput(runtime.currentCwd, displayData);
       if (inferred && inferred !== runtime.currentCwd) {
         runtime.currentCwd = inferred;
-        this.persistCwdAndTitle(tab, shellProfile, inferred);
+        this.persistCwdAndTitle(tab, session, shellProfile, inferred);
       }
     }
 
@@ -423,10 +437,7 @@ export class PtyManager {
       const promptReady = markPromptReady();
       runtime.promptTrackingValid = promptReady.promptTrackingValid;
       runtime.currentInputBuffer = promptReady.currentInputBuffer;
-    } else if (
-      shellProfile.id === "cmd" &&
-      /[A-Za-z]:\\.*>\s*$/.test(displayData.trimEnd())
-    ) {
+    } else if (shellProfile.id === "cmd" && /[A-Za-z]:\\.*>\s*$/.test(displayData.trimEnd())) {
       const promptReady = markPromptReady();
       runtime.promptTrackingValid = promptReady.promptTrackingValid;
       runtime.currentInputBuffer = promptReady.currentInputBuffer;
@@ -434,9 +445,7 @@ export class PtyManager {
 
     if (
       runtime.suppressInitialRenderNoise &&
-      (parsed.promptSignals.length > 0 ||
-        parsed.cwdSignals.length > 0 ||
-        /\S/.test(displayData))
+      (parsed.promptSignals.length > 0 || parsed.cwdSignals.length > 0 || /\S/.test(displayData))
     ) {
       runtime.suppressInitialRenderNoise = false;
     }
@@ -457,6 +466,7 @@ export class PtyManager {
 
       this.onTerminalEvent({
         type: "output",
+        sessionId: runtime.sessionId,
         tabId: runtime.tabId,
         data: displayData,
         sequence,
@@ -467,26 +477,37 @@ export class PtyManager {
   }
 
   private persistCwdAndTitle(
-    tab: SavedTerminalTab,
+    tab: SavedWorkspaceTab,
+    session: SavedTerminalSession,
     shellProfile: ShellProfile,
     cwd: string,
   ): void {
-    const latest = this.database.getTab(tab.id);
-    if (!latest) {
+    const latestSession = this.database.getSession(session.id);
+    if (!latestSession) {
       return;
     }
 
-    const updated = this.database.updateTab({
-      ...latest,
+    const updatedSession = this.database.updateSession({
+      ...latestSession,
       lastKnownCwd: cwd,
-      title: latest.customTitle ?? deriveTabTitle(cwd, shellProfile.label),
     });
-    tab.lastKnownCwd = updated.lastKnownCwd;
-    tab.title = updated.title;
-    tab.customTitle = updated.customTitle;
+    session.lastKnownCwd = updatedSession.lastKnownCwd;
+
+    const latestTab = this.database.getTab(tab.id);
+    if (!latestTab || latestTab.customTitle || latestTab.focusedSessionId !== session.id) {
+      return;
+    }
+
+    const updatedTab = this.database.updateTab({
+      ...latestTab,
+      title: deriveTabTitle(cwd, shellProfile.label),
+    });
+    tab.title = updatedTab.title;
+    tab.customTitle = updatedTab.customTitle;
+    tab.focusedSessionId = updatedTab.focusedSessionId;
   }
 
-  private scheduleSnapshotFlush(runtime: RuntimeTab): void {
+  private scheduleSnapshotFlush(runtime: RuntimeSession): void {
     if (runtime.flushTimer) {
       clearTimeout(runtime.flushTimer);
     }
@@ -497,7 +518,7 @@ export class PtyManager {
     }, SNAPSHOT_DEBOUNCE_MS);
   }
 
-  private async flushSnapshot(runtime: RuntimeTab): Promise<void> {
+  private async flushSnapshot(runtime: RuntimeSession): Promise<void> {
     if (!runtime.snapshotDirty) {
       return;
     }
@@ -511,7 +532,7 @@ export class PtyManager {
     });
   }
 
-  private persistSnapshotNow(runtime: RuntimeTab): void {
+  private persistSnapshotNow(runtime: RuntimeSession): void {
     if (runtime.alternateScreenActive || runtime.disposed) {
       return;
     }
@@ -520,27 +541,24 @@ export class PtyManager {
     runtime.lastSerializedByteCount = countSnapshotBytes(transcriptText);
     runtime.snapshotDirty = false;
     this.database.upsertSnapshot({
-      tabId: runtime.tabId,
+      sessionId: runtime.sessionId,
       snapshotFormat: SNAPSHOT_FORMAT,
       transcriptText,
       byteCount: runtime.lastSerializedByteCount,
     });
   }
 
-  private async captureReplayState(runtime: RuntimeTab): Promise<{
+  private async captureReplayState(runtime: RuntimeSession): Promise<{
     serializedState: string;
     replayRevision: number;
   }> {
-    return this.enqueueRuntimeTask(runtime, () => {
-      const serializedState = serializeTerminal(runtime);
-      return {
-        serializedState,
-        replayRevision: runtime.lastCommittedSequence,
-      };
-    });
+    return this.enqueueRuntimeTask(runtime, () => ({
+      serializedState: serializeTerminal(runtime),
+      replayRevision: runtime.lastCommittedSequence,
+    }));
   }
 
-  private resizeRuntime(runtime: RuntimeTab, cols: number, rows: number): void {
+  private resizeRuntime(runtime: RuntimeSession, cols: number, rows: number): void {
     if (isSameTerminalSize({ cols: runtime.headless.cols, rows: runtime.headless.rows }, { cols, rows })) {
       return;
     }
@@ -560,10 +578,7 @@ export class PtyManager {
     });
   }
 
-  private enqueueRuntimeTask<T>(
-    runtime: RuntimeTab,
-    task: () => Promise<T> | T,
-  ): Promise<T> {
+  private enqueueRuntimeTask<T>(runtime: RuntimeSession, task: () => Promise<T> | T): Promise<T> {
     const nextTask = runtime.operationQueue.then(
       () => (runtime.disposed ? (undefined as T) : task()),
       () => (runtime.disposed ? (undefined as T) : task()),
@@ -575,8 +590,8 @@ export class PtyManager {
     return nextTask;
   }
 
-  private async disposeRuntime(tabId: string, persistSnapshot: boolean): Promise<void> {
-    const runtime = this.runtimes.get(tabId);
+  private async disposeRuntime(sessionId: string, persistSnapshot: boolean): Promise<void> {
+    const runtime = this.runtimes.get(sessionId);
     if (!runtime) {
       return;
     }
@@ -601,19 +616,21 @@ export class PtyManager {
 
     runtime.headless.dispose();
     cleanupBootstrapAssets(runtime.bootstrapCleanupPaths);
-    this.runtimes.delete(tabId);
+    this.runtimes.delete(sessionId);
   }
 
-  private emitStatus(runtime: RuntimeTab): void {
+  private emitStatus(runtime: RuntimeSession): void {
     this.onTerminalEvent({
       type: "status",
+      sessionId: runtime.sessionId,
       tabId: runtime.tabId,
       runtime: this.toRuntimeSummary(runtime),
     });
   }
 
-  private toRuntimeSummary(runtime: RuntimeTab): TabRuntimeSummary {
+  private toRuntimeSummary(runtime: RuntimeSession): SessionRuntimeSummary {
     return {
+      sessionId: runtime.sessionId,
       tabId: runtime.tabId,
       projectId: runtime.projectId,
       started: runtime.status !== "not_started",
@@ -630,9 +647,9 @@ export class PtyManager {
     };
   }
 
-  private resolveSpawnCwd(project: Project, tab: SavedTerminalTab): string {
-    if (tab.lastKnownCwd && fs.existsSync(tab.lastKnownCwd)) {
-      return tab.lastKnownCwd;
+  private resolveSpawnCwd(project: Project, session: SavedTerminalSession): string {
+    if (session.lastKnownCwd && fs.existsSync(session.lastKnownCwd)) {
+      return session.lastKnownCwd;
     }
 
     const projectRoot = project.rootPath.trim();
