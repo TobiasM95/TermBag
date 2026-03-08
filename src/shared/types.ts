@@ -46,6 +46,68 @@ export interface PersistedTabLayout {
   root: TabLayoutNode;
 }
 
+export interface TemplatePathReference {
+  kind: "relative" | "absolute";
+  value: string;
+}
+
+export interface TemplateLayoutLeafNode {
+  id: string;
+  kind: "leaf";
+  paneId: string;
+}
+
+export interface TemplateLayoutSplitNode {
+  id: string;
+  kind: "split";
+  direction: "row" | "column";
+  sizes: number[];
+  children: TemplateLayoutNode[];
+}
+
+export type TemplateLayoutNode = TemplateLayoutLeafNode | TemplateLayoutSplitNode;
+
+export interface TemplateTabLayout {
+  version: 1;
+  root: TemplateLayoutNode;
+}
+
+export interface TemplatePane {
+  id: string;
+  shellProfileId: string;
+  cwd: TemplatePathReference | null;
+}
+
+export interface TemplateTab {
+  title: string;
+  layout: TemplateTabLayout;
+  focusedPaneId: string;
+  panes: TemplatePane[];
+}
+
+export interface TemplateDefinition {
+  name: string;
+  tabs: TemplateTab[];
+}
+
+export interface WorkspaceTemplate extends TemplateDefinition {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TemplateExportFile {
+  version: 1;
+  kind: "template";
+  template: TemplateDefinition;
+}
+
+export interface TemplateLibraryExportFile {
+  version: 1;
+  kind: "template-library";
+  templates: TemplateDefinition[];
+}
+
 export type LayoutPresetId =
   | "single"
   | "split_horizontal"
@@ -159,6 +221,25 @@ export interface RenameTabInput {
   title: string;
 }
 
+export interface SaveProjectAsTemplateInput {
+  projectId: string;
+  name: string;
+  includeWorkingDirectories: boolean;
+}
+
+export interface RenameTemplateInput {
+  templateId: string;
+  name: string;
+}
+
+export type ApplyTemplateMode = "replace" | "append";
+
+export interface ApplyTemplateInput {
+  projectId: string;
+  templateId: string;
+  mode: ApplyTemplateMode;
+}
+
 export interface ApplyLayoutPresetInput {
   tabId: string;
   presetId: LayoutPresetId;
@@ -216,12 +297,23 @@ export type TerminalEvent =
 export interface BootstrapData {
   projects: Project[];
   shellProfiles: ShellProfileAvailability[];
+  templates: WorkspaceTemplate[];
   selectedProjectId: string | null;
 }
 
 export interface RecallHistoryResult {
   applied: boolean;
   reason: string | null;
+}
+
+export interface TemplateImportResult {
+  templates: WorkspaceTemplate[];
+  importedCount: number;
+  filePath: string | null;
+}
+
+export interface TemplateExportResult {
+  filePath: string | null;
 }
 
 export interface TermBagApi {
@@ -234,6 +326,13 @@ export interface TermBagApi {
   createProject(input: CreateProjectInput): Promise<ProjectWorkspace>;
   updateProject(input: UpdateProjectInput): Promise<ProjectWorkspace>;
   deleteProject(projectId: string): Promise<BootstrapData>;
+  saveProjectAsTemplate(input: SaveProjectAsTemplateInput): Promise<WorkspaceTemplate[]>;
+  renameTemplate(input: RenameTemplateInput): Promise<WorkspaceTemplate[]>;
+  deleteTemplate(templateId: string): Promise<WorkspaceTemplate[]>;
+  applyTemplate(input: ApplyTemplateInput): Promise<ProjectWorkspace>;
+  importTemplates(): Promise<TemplateImportResult>;
+  exportTemplate(templateId: string): Promise<TemplateExportResult>;
+  exportAllTemplates(): Promise<TemplateExportResult>;
   createTab(input: CreateTabInput): Promise<ProjectWorkspace>;
   renameTab(input: RenameTabInput): Promise<ProjectWorkspace>;
   closeTab(tabId: string): Promise<ProjectWorkspace>;

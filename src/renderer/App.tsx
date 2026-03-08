@@ -7,11 +7,13 @@ import {
 import { TerminalPane } from "./components/TerminalPane";
 import { useAppStore } from "./store/app-store";
 import type {
+  ApplyTemplateMode,
   CreateProjectInput,
   LayoutPresetId,
   Project,
   ShellProfileAvailability,
   TabLayoutNode,
+  WorkspaceTemplate,
   UpdateProjectInput,
   WorkspaceSession,
   WorkspaceTab,
@@ -31,6 +33,16 @@ type TabContextMenuState = {
 type RenameTabState = {
   tabId: string;
   title: string;
+} | null;
+
+type RenameTemplateState = {
+  templateId: string;
+  name: string;
+} | null;
+
+type ApplyTemplateState = {
+  templateId: string;
+  templateName: string;
 } | null;
 
 type ThemeMode = "dark" | "light";
@@ -233,6 +245,14 @@ function getShellLabel(shellProfileId: string): string {
   }
 }
 
+function countTemplatePanes(template: WorkspaceTemplate): number {
+  return template.tabs.reduce((count, tab) => count + tab.panes.length, 0);
+}
+
+function templateIncludesWorkingDirectories(template: WorkspaceTemplate): boolean {
+  return template.tabs.some((tab) => tab.panes.some((pane) => pane.cwd !== null));
+}
+
 export function App() {
   const hasPreloadApi =
     typeof window !== "undefined" && typeof window.termbag !== "undefined";
@@ -244,6 +264,7 @@ export function App() {
     error,
     projects,
     shellProfiles,
+    templates,
     selectedProjectId,
     workspaces,
     historyEntries,
@@ -256,6 +277,13 @@ export function App() {
     createProject,
     updateProject,
     deleteProject,
+    saveProjectAsTemplate,
+    renameTemplate,
+    deleteTemplate,
+    applyTemplate,
+    importTemplates,
+    exportTemplate,
+    exportAllTemplates,
     createTab,
     renameTab,
     closeTab,
@@ -270,9 +298,13 @@ export function App() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [layoutsOpen, setLayoutsOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
   const [shellPickerOpen, setShellPickerOpen] = useState(false);
   const [tabContextMenu, setTabContextMenu] = useState<TabContextMenuState>(null);
   const [renameTabState, setRenameTabState] = useState<RenameTabState>(null);
+  const [renameTemplateState, setRenameTemplateState] = useState<RenameTemplateState>(null);
+  const [applyTemplateState, setApplyTemplateState] = useState<ApplyTemplateState>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === "undefined") {
       return false;
@@ -281,6 +313,7 @@ export function App() {
     return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true";
   });
   const [recallNotice, setRecallNotice] = useState<string | null>(null);
+  const [templateNotice, setTemplateNotice] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     if (typeof window === "undefined") {
       return "dark";
@@ -388,6 +421,18 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [clearError, error]);
 
+  useEffect(() => {
+    if (!templateNotice) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setTemplateNotice(null);
+    }, 3200);
+
+    return () => window.clearTimeout(timer);
+  }, [templateNotice]);
+
   const selectedWorkspace = selectedProjectId ? workspaces[selectedProjectId] : undefined;
   const selectedProject =
     projects.find((project) => project.id === selectedProjectId) ?? selectedWorkspace?.project;
@@ -488,6 +533,44 @@ export function App() {
     });
   };
 
+  const handleCloseTemplatesModal = () => {
+    setTemplatesOpen(false);
+    setSaveTemplateOpen(false);
+    setRenameTemplateState(null);
+    setApplyTemplateState(null);
+  };
+
+  const handleImportTemplates = async () => {
+    const result = await importTemplates();
+    if (!result || result.importedCount === 0) {
+      return;
+    }
+
+    setTemplateNotice(
+      result.importedCount === 1
+        ? `Imported template from ${result.filePath ?? "JSON file"}.`
+        : `Imported ${result.importedCount} templates from ${result.filePath ?? "JSON file"}.`,
+    );
+  };
+
+  const handleExportTemplate = async (templateId: string, templateName: string) => {
+    const result = await exportTemplate(templateId);
+    if (!result?.filePath) {
+      return;
+    }
+
+    setTemplateNotice(`Exported "${templateName}" to ${result.filePath}.`);
+  };
+
+  const handleExportAllTemplates = async () => {
+    const result = await exportAllTemplates();
+    if (!result?.filePath) {
+      return;
+    }
+
+    setTemplateNotice(`Exported all templates to ${result.filePath}.`);
+  };
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -503,8 +586,12 @@ export function App() {
         historyOpen ||
         settingsOpen ||
         layoutsOpen ||
+        templatesOpen ||
+        saveTemplateOpen ||
         shellPickerOpen ||
-        renameTabState
+        renameTabState ||
+        renameTemplateState ||
+        applyTemplateState
       ) {
         return;
       }
@@ -633,7 +720,11 @@ export function App() {
     setFocusedSession,
     settingsOpen,
     layoutsOpen,
+    templatesOpen,
+    saveTemplateOpen,
     shellPickerOpen,
+    renameTemplateState,
+    applyTemplateState,
     sortedProjects,
     tabSessionHotkeyModifier,
   ]);
@@ -844,6 +935,16 @@ export function App() {
           <div className="sidebar__bottom">
             <button
               type="button"
+              className="ghost-button sidebar__bottom-button sidebar__templates-button"
+              onClick={() => setTemplatesOpen(true)}
+              title="Templates"
+              aria-label="Templates"
+            >
+              <TemplatesIcon />
+              {!sidebarCollapsed ? <span>Templates</span> : null}
+            </button>
+            <button
+              type="button"
               className="ghost-button sidebar__bottom-button sidebar__layouts-button"
               onClick={() => setLayoutsOpen(true)}
               title={activeTab ? "Layouts" : "Select a tab to change layouts"}
@@ -913,6 +1014,7 @@ export function App() {
       </div>
 
       {error ? <FloatingError message={error} /> : null}
+      {templateNotice ? <FloatingNotice message={templateNotice} /> : null}
 
       {modalState ? (
         <ProjectModal
@@ -941,6 +1043,36 @@ export function App() {
         />
       ) : null}
 
+      {templatesOpen ? (
+        <TemplatesModal
+          templates={templates}
+          canApply={Boolean(selectedProject)}
+          canSaveCurrent={Boolean(selectedProject)}
+          onClose={handleCloseTemplatesModal}
+          onSaveCurrent={() => setSaveTemplateOpen(true)}
+          onImport={() => void handleImportTemplates()}
+          onExportAll={() => void handleExportAllTemplates()}
+          onApply={(template) =>
+            setApplyTemplateState({
+              templateId: template.id,
+              templateName: template.name,
+            })
+          }
+          onRename={(template) =>
+            setRenameTemplateState({
+              templateId: template.id,
+              name: template.name,
+            })
+          }
+          onDelete={(template) => {
+            if (window.confirm(`Delete template "${template.name}"?`)) {
+              void deleteTemplate(template.id);
+            }
+          }}
+          onExport={(template) => void handleExportTemplate(template.id, template.name)}
+        />
+      ) : null}
+
       {layoutsOpen && activeTab ? (
         <LayoutsModal
           activePresetId={activeLayoutPresetId}
@@ -951,6 +1083,57 @@ export function App() {
               presetId,
             });
             setLayoutsOpen(false);
+          }}
+        />
+      ) : null}
+
+      {saveTemplateOpen && selectedProject ? (
+        <SaveTemplateModal
+          initialName={selectedProject.name}
+          onClose={() => setSaveTemplateOpen(false)}
+          onSubmit={async (name, includeWorkingDirectories) => {
+            await saveProjectAsTemplate({
+              projectId: selectedProject.id,
+              name,
+              includeWorkingDirectories,
+            });
+            setSaveTemplateOpen(false);
+            setTemplateNotice(`Saved template "${name.trim()}".`);
+          }}
+        />
+      ) : null}
+
+      {renameTemplateState ? (
+        <RenameTemplateModal
+          initialName={renameTemplateState.name}
+          onClose={() => setRenameTemplateState(null)}
+          onSubmit={async (name) => {
+            await renameTemplate({
+              templateId: renameTemplateState.templateId,
+              name,
+            });
+            setRenameTemplateState(null);
+            setTemplateNotice(`Renamed template to "${name.trim()}".`);
+          }}
+        />
+      ) : null}
+
+      {applyTemplateState && selectedProject ? (
+        <ApplyTemplateModal
+          projectName={selectedProject.name}
+          templateName={applyTemplateState.templateName}
+          onClose={() => setApplyTemplateState(null)}
+          onApply={async (mode) => {
+            await applyTemplate({
+              projectId: selectedProject.id,
+              templateId: applyTemplateState.templateId,
+              mode,
+            });
+            setApplyTemplateState(null);
+            setTemplatesOpen(false);
+            setTemplateNotice(
+              `${mode === "replace" ? "Replaced" : "Appended"} tabs from "${applyTemplateState.templateName}".`,
+            );
           }}
         />
       ) : null}
@@ -1192,6 +1375,20 @@ function DeleteIcon() {
   );
 }
 
+function TemplatesIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="ui-icon" aria-hidden="true">
+      <path
+        d="M3 3.2h10v2.6H3zM3 7h10v2.6H3zM3 10.8h10v2H3z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.1"
+      />
+      <path d="M5 2.2v1.4M8 2.2v1.4M11 2.2v1.4" fill="none" stroke="currentColor" strokeWidth="1.1" />
+    </svg>
+  );
+}
+
 function SettingsIcon() {
   return (
     <svg viewBox="0 0 16 16" className="ui-icon" aria-hidden="true">
@@ -1279,6 +1476,269 @@ interface FloatingErrorProps {
 
 function FloatingError({ message }: FloatingErrorProps) {
   return <div className="floating-error">{message}</div>;
+}
+
+function FloatingNotice({ message }: FloatingErrorProps) {
+  return <div className="floating-notice">{message}</div>;
+}
+
+interface TemplatesModalProps {
+  templates: WorkspaceTemplate[];
+  canApply: boolean;
+  canSaveCurrent: boolean;
+  onClose(): void;
+  onSaveCurrent(): void;
+  onImport(): void;
+  onExportAll(): void;
+  onApply(template: WorkspaceTemplate): void;
+  onRename(template: WorkspaceTemplate): void;
+  onDelete(template: WorkspaceTemplate): void;
+  onExport(template: WorkspaceTemplate): void;
+}
+
+function TemplatesModal({
+  templates,
+  canApply,
+  canSaveCurrent,
+  onClose,
+  onSaveCurrent,
+  onImport,
+  onExportAll,
+  onApply,
+  onRename,
+  onDelete,
+  onExport,
+}: TemplatesModalProps) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal templates-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="history-header">
+          <div>
+            <h3>Templates</h3>
+            <p>Save reusable tab sets, layouts, names, and optional working directories.</p>
+          </div>
+          <button type="button" className="ghost-button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="templates-toolbar">
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={onSaveCurrent}
+            disabled={!canSaveCurrent}
+          >
+            Save current
+          </button>
+          <button type="button" className="ghost-button" onClick={onImport}>
+            Import JSON
+          </button>
+          <button type="button" className="ghost-button" onClick={onExportAll}>
+            Export all
+          </button>
+        </div>
+        {!canApply ? (
+          <div className="banner templates-banner">
+            Select a project to save the current workspace or apply a template.
+          </div>
+        ) : null}
+        <div className="template-list">
+          {templates.length === 0 ? (
+            <div className="sidebar-empty-card templates-empty-card">
+              <strong>No templates saved</strong>
+              <p>Save the current project layout or import a JSON template file.</p>
+            </div>
+          ) : null}
+          {templates.map((template) => (
+            <div key={template.id} className="template-card">
+              <div className="template-card__content">
+                <div className="template-card__top">
+                  <strong>{template.name}</strong>
+                  <span>
+                    {template.tabs.length} tab{template.tabs.length === 1 ? "" : "s"} ·{" "}
+                    {countTemplatePanes(template)} pane
+                    {countTemplatePanes(template) === 1 ? "" : "s"}
+                  </span>
+                </div>
+                <div className="template-card__meta">
+                  <span>
+                    {templateIncludesWorkingDirectories(template)
+                      ? "Working directories included"
+                      : "Shells and layout only"}
+                  </span>
+                  <span>{new Date(template.updatedAt).toLocaleString()}</span>
+                </div>
+              </div>
+              <div className="template-card__actions">
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => onApply(template)}
+                  disabled={!canApply}
+                >
+                  Apply
+                </button>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => onExport(template)}
+                >
+                  Export
+                </button>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => onRename(template)}
+                >
+                  Rename
+                </button>
+                <button
+                  type="button"
+                  className="ghost-button template-card__delete"
+                  onClick={() => onDelete(template)}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface SaveTemplateModalProps {
+  initialName: string;
+  onClose(): void;
+  onSubmit(name: string, includeWorkingDirectories: boolean): Promise<void>;
+}
+
+function SaveTemplateModal({
+  initialName,
+  onClose,
+  onSubmit,
+}: SaveTemplateModalProps) {
+  const [name, setName] = useState(initialName);
+  const [includeWorkingDirectories, setIncludeWorkingDirectories] = useState(false);
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal modal--compact" onClick={(event) => event.stopPropagation()}>
+        <h3>Save template</h3>
+        <label>
+          <span>Name</span>
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Project workspace"
+          />
+        </label>
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            checked={includeWorkingDirectories}
+            onChange={(event) => setIncludeWorkingDirectories(event.target.checked)}
+          />
+          <span>Include working directories for visible panes</span>
+        </label>
+        <div className="modal__actions">
+          <button type="button" className="ghost-button" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => void onSubmit(name, includeWorkingDirectories)}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface RenameTemplateModalProps {
+  initialName: string;
+  onClose(): void;
+  onSubmit(name: string): Promise<void>;
+}
+
+function RenameTemplateModal({
+  initialName,
+  onClose,
+  onSubmit,
+}: RenameTemplateModalProps) {
+  const [name, setName] = useState(initialName);
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal modal--compact" onClick={(event) => event.stopPropagation()}>
+        <h3>Rename template</h3>
+        <label>
+          <span>Name</span>
+          <input value={name} onChange={(event) => setName(event.target.value)} />
+        </label>
+        <div className="modal__actions">
+          <button type="button" className="ghost-button" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => void onSubmit(name)}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface ApplyTemplateModalProps {
+  projectName: string;
+  templateName: string;
+  onClose(): void;
+  onApply(mode: ApplyTemplateMode): Promise<void>;
+}
+
+function ApplyTemplateModal({
+  projectName,
+  templateName,
+  onClose,
+  onApply,
+}: ApplyTemplateModalProps) {
+  return (
+    <div className="modal-backdrop">
+      <div className="modal modal--compact" onClick={(event) => event.stopPropagation()}>
+        <h3>Apply template</h3>
+        <p className="settings-note">
+          Apply "{templateName}" to "{projectName}".
+        </p>
+        <div className="template-apply-actions">
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => void onApply("replace")}
+          >
+            Replace tabs
+          </button>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => void onApply("append")}
+          >
+            Append tabs
+          </button>
+          <button type="button" className="ghost-button" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 interface SettingsModalProps {

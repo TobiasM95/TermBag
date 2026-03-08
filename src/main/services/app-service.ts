@@ -9,30 +9,47 @@ import {
   getLayoutPresetLeafCount,
 } from "../../shared/layout.js";
 import { deriveTabTitle, normalizeWindowsPath } from "../../shared/paths.js";
+import {
+  findFirstTemplatePaneId,
+  mapPersistedLayoutToTemplateLayout,
+  mapTemplateLayoutToPersistedLayout,
+  parseTemplateDocument,
+  serializeTemplateDocument,
+  serializeTemplateLibraryDocument,
+} from "../../shared/templates.js";
 import type {
   ActivateSessionInput,
+  ApplyTemplateInput,
   ApplyLayoutPresetInput,
   BootstrapData,
   CreateProjectInput,
   CreateTabInput,
   HistoryEntry,
   HydratedSession,
-  LayoutPresetId,
   Project,
   ProjectWorkspace,
   RenameTabInput,
+  RenameTemplateInput,
   RecallHistoryResult,
+  SaveProjectAsTemplateInput,
   SavedTerminalSession,
   SavedWorkspaceTab,
   SetFocusedSessionInput,
   ShellProfile,
   ShellProfileAvailability,
+  TemplateDefinition,
+  TemplateTab,
   UpdateProjectInput,
+  WorkspaceTemplate,
   WorkspaceTab,
 } from "../../shared/types.js";
 import { DatabaseService } from "./database.js";
 import { PtyManager } from "./pty-manager.js";
 import { ShellCatalog } from "./shell-catalog.js";
+import {
+  encodeTemplatePathReference,
+  resolveTemplatePathReference,
+} from "./template-paths.js";
 
 export class AppService {
   private readonly shellProfiles: ShellProfileAvailability[];
@@ -51,6 +68,7 @@ export class AppService {
     return {
       projects,
       shellProfiles: this.shellProfiles,
+      templates: this.database.listTemplates(),
       selectedProjectId: projects[0]?.id ?? null,
     };
   }
@@ -113,6 +131,122 @@ export class AppService {
     }
     this.database.deleteProject(projectId);
     return this.bootstrap();
+  }
+
+  saveProjectAsTemplate(input: SaveProjectAsTemplateInput): WorkspaceTemplate[] {
+    const project = this.requireProject(input.projectId);
+    const name = input.name.trim();
+    if (!name) {
+      throw new Error("Template name is required.");
+    }
+
+    const tabs = this.database
+      .listTabsForProject(project.id)
+      .map((tab) => this.normalizeTabState(tab));
+    if (tabs.length === 0) {
+      throw new Error("Cannot save a template from a project with no tabs.");
+    }
+
+    this.database.createTemplate({
+      id: crypto.randomUUID(),
+      name,
+      tabs: tabs.map((tab) =>
+        this.extractTemplateTab(project, tab, input.includeWorkingDirectories),
+      ),
+    });
+
+    return this.database.listTemplates();
+  }
+
+  renameTemplate(input: RenameTemplateInput): WorkspaceTemplate[] {
+    const template = this.requireTemplate(input.templateId);
+    const name = input.name.trim();
+    if (!name) {
+      throw new Error("Template name is required.");
+    }
+
+    this.database.updateTemplate({
+      ...template,
+      name,
+    });
+
+    return this.database.listTemplates();
+  }
+
+  deleteTemplate(templateId: string): WorkspaceTemplate[] {
+    this.requireTemplate(templateId);
+    this.database.deleteTemplate(templateId);
+    return this.database.listTemplates();
+  }
+
+  applyTemplate(input: ApplyTemplateInput): ProjectWorkspace {
+    const project = this.requireProject(input.projectId);
+    const template = this.requireTemplate(input.templateId);
+    if (template.tabs.length === 0) {
+      throw new Error("Template does not contain any tabs.");
+    }
+
+    const previousTabs =
+      input.mode === "replace" ? this.database.listTabsForProject(project.id) : [];
+    const firstRestoreOrder =
+      input.mode === "append" ? this.database.getMaxRestoreOrder(project.id) + 1 : 1;
+    const createdTabIds: string[] = [];
+
+    for (const [index, templateTab] of template.tabs.entries()) {
+      const created = this.materializeTemplateTab(
+        project,
+        templateTab,
+        firstRestoreOrder + index,
+      );
+      createdTabIds.push(created.tab.id);
+    }
+
+    if (input.mode === "replace") {
+      for (const tab of previousTabs) {
+        this.ptyManager.closeTab(tab.id);
+        this.database.deleteTab(tab.id);
+      }
+    }
+
+    const workspace = this.getProjectWorkspace(project.id);
+    return {
+      ...workspace,
+      selectedTabId: createdTabIds[0] ?? workspace.selectedTabId,
+    };
+  }
+
+  importTemplates(serialized: string): {
+    templates: WorkspaceTemplate[];
+    importedCount: number;
+  } {
+    const definitions = parseTemplateDocument(serialized);
+    const existingNames = new Set(this.database.listTemplates().map((template) => template.name));
+
+    for (const definition of definitions) {
+      const name = this.createImportedTemplateName(definition.name, existingNames);
+      existingNames.add(name);
+      this.database.createTemplate({
+        id: crypto.randomUUID(),
+        name,
+        tabs: definition.tabs,
+      });
+    }
+
+    return {
+      templates: this.database.listTemplates(),
+      importedCount: definitions.length,
+    };
+  }
+
+  exportTemplate(templateId: string): string {
+    const template = this.requireTemplate(templateId);
+    return serializeTemplateDocument(this.toTemplateDefinition(template));
+  }
+
+  exportAllTemplates(): string {
+    return serializeTemplateLibraryDocument(
+      this.database.listTemplates().map((template) => this.toTemplateDefinition(template)),
+    );
   }
 
   createTab(input: CreateTabInput): ProjectWorkspace {
@@ -386,6 +520,120 @@ export class AppService {
     );
   }
 
+  private extractTemplateTab(
+    project: Project,
+    tab: SavedWorkspaceTab,
+    includeWorkingDirectories: boolean,
+  ): TemplateTab {
+    const sessions = this.requireSessionsForTab(tab.id);
+    const sessionIdsById = new Map(sessions.map((session) => [session.id, session]));
+    const visibleSessionIds = flattenLayoutLeafSessionIds(tab.layout);
+    if (visibleSessionIds.length === 0) {
+      throw new Error(`Tab has no visible panes: ${tab.id}`);
+    }
+
+    const panes = visibleSessionIds.map((sessionId) => {
+      const session = sessionIdsById.get(sessionId);
+      if (!session) {
+        throw new Error(`Tab layout references a missing session: ${sessionId}`);
+      }
+
+      return {
+        id: session.id,
+        shellProfileId: session.shellProfileId,
+        cwd: includeWorkingDirectories
+          ? encodeTemplatePathReference(project.rootPath, session.lastKnownCwd)
+          : null,
+      };
+    });
+
+    return {
+      title: tab.title,
+      layout: mapPersistedLayoutToTemplateLayout(tab.layout),
+      focusedPaneId: visibleSessionIds.includes(tab.focusedSessionId)
+        ? tab.focusedSessionId
+        : visibleSessionIds[0]!,
+      panes,
+    };
+  }
+
+  private materializeTemplateTab(
+    project: Project,
+    templateTab: TemplateTab,
+    restoreOrder: number,
+  ): { tab: SavedWorkspaceTab; sessions: SavedTerminalSession[] } {
+    const tabId = crypto.randomUUID();
+    const paneSessionIds = new Map<string, string>();
+    const sessions = templateTab.panes.map((pane, index) => {
+      const sessionId = crypto.randomUUID();
+      paneSessionIds.set(pane.id, sessionId);
+
+      return {
+        id: sessionId,
+        tabId,
+        shellProfileId: this.resolveTemplateShellProfileId(project, pane.shellProfileId),
+        lastKnownCwd: resolveTemplatePathReference(project.rootPath, pane.cwd),
+        sessionOrder: index + 1,
+      };
+    });
+
+    const focusedPaneId =
+      templateTab.panes.some((pane) => pane.id === templateTab.focusedPaneId)
+        ? templateTab.focusedPaneId
+        : findFirstTemplatePaneId(templateTab.layout);
+    const focusedSessionId =
+      (focusedPaneId ? paneSessionIds.get(focusedPaneId) : null) ??
+      sessions[0]?.id;
+    if (!focusedSessionId) {
+      throw new Error("Template tab does not contain any panes.");
+    }
+
+    return this.database.createTabWithSessions({
+      tab: {
+        id: tabId,
+        projectId: project.id,
+        title: templateTab.title,
+        customTitle: templateTab.title,
+        restoreOrder,
+        layout: mapTemplateLayoutToPersistedLayout(templateTab.layout, paneSessionIds),
+        focusedSessionId,
+      },
+      sessions,
+    });
+  }
+
+  private resolveTemplateShellProfileId(project: Project, shellProfileId: string): string {
+    return this.shellCatalog.isAvailable(shellProfileId)
+      ? shellProfileId
+      : project.defaultShellProfileId;
+  }
+
+  private toTemplateDefinition(template: WorkspaceTemplate): TemplateDefinition {
+    return {
+      name: template.name,
+      tabs: template.tabs,
+    };
+  }
+
+  private createImportedTemplateName(
+    desiredName: string,
+    existingNames: Set<string>,
+  ): string {
+    if (!existingNames.has(desiredName)) {
+      return desiredName;
+    }
+
+    let suffix = 1;
+    while (true) {
+      const candidate =
+        suffix === 1 ? `${desiredName} (Imported)` : `${desiredName} (Imported ${suffix})`;
+      if (!existingNames.has(candidate)) {
+        return candidate;
+      }
+      suffix += 1;
+    }
+  }
+
   private requireProject(projectId: string): Project {
     const project = this.database.getProject(projectId);
     if (!project) {
@@ -408,6 +656,15 @@ export class AppService {
       throw new Error(`Session not found: ${sessionId}`);
     }
     return session;
+  }
+
+  private requireTemplate(templateId: string): WorkspaceTemplate {
+    const template = this.database.getTemplate(templateId);
+    if (!template) {
+      throw new Error(`Template not found: ${templateId}`);
+    }
+
+    return template;
   }
 
   private requireSessionsForTab(tabId: string): SavedTerminalSession[] {

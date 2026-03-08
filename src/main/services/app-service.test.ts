@@ -9,6 +9,8 @@ import type {
   SessionRuntimeSummary,
   ShellProfile,
   ShellProfileAvailability,
+  TemplateTab,
+  WorkspaceTemplate,
 } from "../../shared/types.js";
 import { AppService } from "./app-service.js";
 
@@ -17,6 +19,7 @@ class FakeDatabaseService {
   private readonly tabs = new Map<string, SavedWorkspaceTab>();
   private readonly sessions = new Map<string, SavedTerminalSession>();
   private readonly shellProfiles = new Map<string, ShellProfile>();
+  private readonly templates = new Map<string, WorkspaceTemplate>();
 
   upsertShellProfiles(profiles: ShellProfileAvailability[]): void {
     for (const profile of profiles) {
@@ -62,6 +65,44 @@ class FakeDatabaseService {
 
   deleteProject(projectId: string): void {
     this.projects.delete(projectId);
+  }
+
+  listTemplates(): WorkspaceTemplate[] {
+    return [...this.templates.values()].sort(
+      (left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt) ||
+        right.createdAt.localeCompare(left.createdAt) ||
+        left.name.localeCompare(right.name),
+    );
+  }
+
+  getTemplate(templateId: string): WorkspaceTemplate | null {
+    return this.templates.get(templateId) ?? null;
+  }
+
+  createTemplate(params: { id: string; name: string; tabs: TemplateTab[] }): WorkspaceTemplate {
+    const timestamp = new Date().toISOString();
+    const template: WorkspaceTemplate = {
+      id: params.id,
+      name: params.name,
+      tabs: params.tabs,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    this.templates.set(template.id, template);
+    return template;
+  }
+
+  updateTemplate(template: WorkspaceTemplate): WorkspaceTemplate {
+    this.templates.set(template.id, {
+      ...template,
+      updatedAt: new Date().toISOString(),
+    });
+    return this.templates.get(template.id)!;
+  }
+
+  deleteTemplate(templateId: string): void {
+    this.templates.delete(templateId);
   }
 
   listTabsForProject(projectId: string): SavedWorkspaceTab[] {
@@ -127,6 +168,49 @@ class FakeDatabaseService {
     this.tabs.set(tab.id, tab);
     this.sessions.set(session.id, session);
     return { tab, session };
+  }
+
+  createTabWithSessions(params: {
+    tab: {
+      id: string;
+      projectId: string;
+      title: string;
+      customTitle: string | null;
+      restoreOrder: number;
+      layout: PersistedTabLayout;
+      focusedSessionId: string;
+    };
+    sessions: Array<{
+      id: string;
+      tabId: string;
+      shellProfileId: string;
+      lastKnownCwd: string | null;
+      sessionOrder: number;
+      createdAt?: string;
+      updatedAt?: string;
+    }>;
+  }): { tab: SavedWorkspaceTab; sessions: SavedTerminalSession[] } {
+    const timestamp = new Date().toISOString();
+    const tab: SavedWorkspaceTab = {
+      ...params.tab,
+      wasOpen: true,
+      lastActivatedAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    this.tabs.set(tab.id, tab);
+
+    const sessions = params.sessions.map((paramsSession) => {
+      const session: SavedTerminalSession = {
+        ...paramsSession,
+        createdAt: paramsSession.createdAt ?? timestamp,
+        updatedAt: paramsSession.updatedAt ?? timestamp,
+      };
+      this.sessions.set(session.id, session);
+      return session;
+    });
+
+    return { tab, sessions };
   }
 
   updateTab(tab: SavedWorkspaceTab): SavedWorkspaceTab {
@@ -366,5 +450,222 @@ describe("AppService", () => {
     expect(flattenLayoutLeafSessionIds(focusedTab.layout)).toEqual(
       splitTab.sessions.slice(0, 2).map((session) => session.id),
     );
+  });
+
+  it("saves templates from visible panes only and encodes working directories optionally", () => {
+    const database = new FakeDatabaseService();
+    const service = new AppService(
+      database as never,
+      new FakeShellCatalog() as never,
+      new FakePtyManager() as never,
+    );
+
+    const workspace = service.createProject({
+      name: "Repo",
+      rootPath: "C:\\Work\\Repo",
+    });
+    const tabId = workspace.tabs[0]!.id;
+    service.applyLayoutPreset({ tabId, presetId: "grid_2x2" });
+    service.applyLayoutPreset({ tabId, presetId: "split_vertical" });
+
+    const visibleSessions = database.listSessionsForTab(tabId);
+    database.updateSession({
+      ...visibleSessions[0]!,
+      lastKnownCwd: "C:\\Work\\Repo",
+    });
+    database.updateSession({
+      ...visibleSessions[1]!,
+      lastKnownCwd: "C:\\Work\\Repo\\src",
+    });
+    database.updateSession({
+      ...visibleSessions[2]!,
+      lastKnownCwd: "D:\\External",
+    });
+
+    service.saveProjectAsTemplate({
+      projectId: workspace.project.id,
+      name: "Visible only",
+      includeWorkingDirectories: true,
+    });
+
+    const [template] = database.listTemplates();
+    expect(template).toBeTruthy();
+    expect(template!.tabs).toHaveLength(1);
+    expect(template!.tabs[0]!.panes).toHaveLength(2);
+    expect(template!.tabs[0]!.panes[0]!.cwd).toEqual({
+      kind: "relative",
+      value: ".",
+    });
+    expect(template!.tabs[0]!.panes[1]!.cwd).toEqual({
+      kind: "relative",
+      value: "src",
+    });
+  });
+
+  it("applies templates in append and replace modes", () => {
+    const database = new FakeDatabaseService();
+    const service = new AppService(
+      database as never,
+      new FakeShellCatalog() as never,
+      new FakePtyManager() as never,
+    );
+
+    const workspace = service.createProject({
+      name: "Repo",
+      rootPath: "C:\\Work\\Repo",
+    });
+    const originalTabId = workspace.tabs[0]!.id;
+
+    database.createTemplate({
+      id: "template-1",
+      name: "Two tabs",
+      tabs: [
+        {
+          title: "API",
+          focusedPaneId: "pane-1",
+          layout: {
+            version: 1,
+            root: { id: "pane-1:root", kind: "leaf", paneId: "pane-1" },
+          },
+          panes: [{ id: "pane-1", shellProfileId: "pwsh", cwd: null }],
+        },
+        {
+          title: "UI",
+          focusedPaneId: "pane-2",
+          layout: {
+            version: 1,
+            root: { id: "pane-2:root", kind: "leaf", paneId: "pane-2" },
+          },
+          panes: [{ id: "pane-2", shellProfileId: "pwsh", cwd: null }],
+        },
+      ],
+    });
+
+    const appended = service.applyTemplate({
+      projectId: workspace.project.id,
+      templateId: "template-1",
+      mode: "append",
+    });
+    expect(appended.tabs).toHaveLength(3);
+    expect(appended.selectedTabId).toBe(appended.tabs[1]!.id);
+    expect(appended.tabs[1]!.title).toBe("API");
+    expect(appended.tabs[2]!.title).toBe("UI");
+    expect(appended.tabs[0]!.id).toBe(originalTabId);
+
+    const replaced = service.applyTemplate({
+      projectId: workspace.project.id,
+      templateId: "template-1",
+      mode: "replace",
+    });
+    expect(replaced.tabs).toHaveLength(2);
+    expect(replaced.tabs.every((tab) => tab.title === "API" || tab.title === "UI")).toBe(true);
+    expect(replaced.tabs.some((tab) => tab.id === originalTabId)).toBe(false);
+    expect(replaced.selectedTabId).toBe(replaced.tabs[0]!.id);
+  });
+
+  it("falls back to the project default shell when a template shell is unavailable", () => {
+    const database = new FakeDatabaseService();
+    const service = new AppService(
+      database as never,
+      new FakeShellCatalog() as never,
+      new FakePtyManager() as never,
+    );
+
+    const workspace = service.createProject({
+      name: "Repo",
+      rootPath: "C:\\Work\\Repo",
+    });
+
+    database.createTemplate({
+      id: "template-shell-fallback",
+      name: "Fallback",
+      tabs: [
+        {
+          title: "Fallback",
+          focusedPaneId: "pane-1",
+          layout: {
+            version: 1,
+            root: { id: "pane-1:root", kind: "leaf", paneId: "pane-1" },
+          },
+          panes: [{ id: "pane-1", shellProfileId: "missing-shell", cwd: null }],
+        },
+      ],
+    });
+
+    const applied = service.applyTemplate({
+      projectId: workspace.project.id,
+      templateId: "template-shell-fallback",
+      mode: "append",
+    });
+    const appliedSession = applied.tabs[1]!.sessions[0]!;
+
+    expect(appliedSession.shellProfileId).toBe("pwsh");
+  });
+
+  it("imports templates with deterministic suffixes on name conflicts", () => {
+    const database = new FakeDatabaseService();
+    const service = new AppService(
+      database as never,
+      new FakeShellCatalog() as never,
+      new FakePtyManager() as never,
+    );
+
+    database.createTemplate({
+      id: "existing-template",
+      name: "Starter",
+      tabs: [
+        {
+          title: "Tab",
+          focusedPaneId: "pane-1",
+          layout: {
+            version: 1,
+            root: { id: "pane-1:root", kind: "leaf", paneId: "pane-1" },
+          },
+          panes: [{ id: "pane-1", shellProfileId: "pwsh", cwd: null }],
+        },
+      ],
+    });
+
+    const result = service.importTemplates(
+      JSON.stringify({
+        version: 1,
+        kind: "template-library",
+        templates: [
+          {
+            name: "Starter",
+            tabs: [
+              {
+                title: "Tab A",
+                focusedPaneId: "pane-a",
+                layout: {
+                  version: 1,
+                  root: { id: "pane-a:root", kind: "leaf", paneId: "pane-a" },
+                },
+                panes: [{ id: "pane-a", shellProfileId: "pwsh", cwd: null }],
+              },
+            ],
+          },
+          {
+            name: "Starter",
+            tabs: [
+              {
+                title: "Tab B",
+                focusedPaneId: "pane-b",
+                layout: {
+                  version: 1,
+                  root: { id: "pane-b:root", kind: "leaf", paneId: "pane-b" },
+                },
+                panes: [{ id: "pane-b", shellProfileId: "pwsh", cwd: null }],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(result.importedCount).toBe(2);
+    expect(result.templates.map((template) => template.name)).toContain("Starter");
+    expect(result.templates.map((template) => template.name)).toContain("Starter (Imported)");
+    expect(result.templates.map((template) => template.name)).toContain("Starter (Imported 2)");
   });
 });

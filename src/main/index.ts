@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -12,15 +13,22 @@ import {
 import { IPC_CHANNELS } from "../shared/ipc.js";
 import type {
   ActivateSessionInput,
+  ApplyTemplateInput,
   ApplyLayoutPresetInput,
+  BootstrapData,
   CreateProjectInput,
   CreateTabInput,
   HistoryQuery,
+  RenameTemplateInput,
   RenameTabInput,
   RecallHistoryInput,
   ResizeSessionInput,
+  SaveProjectAsTemplateInput,
   SetFocusedSessionInput,
+  TemplateExportResult,
+  TemplateImportResult,
   UpdateProjectInput,
+  WorkspaceTemplate,
 } from "../shared/types.js";
 import { describeStartupFailure } from "./startup-errors.js";
 import {
@@ -31,11 +39,21 @@ import {
 } from "./services/window-state.js";
 
 interface AppServiceContract {
-  bootstrap(): unknown;
+  bootstrap(): BootstrapData;
   getProjectWorkspace(projectId: string): unknown;
   createProject(input: CreateProjectInput): unknown;
   updateProject(input: UpdateProjectInput): unknown;
   deleteProject(projectId: string): unknown;
+  saveProjectAsTemplate(input: SaveProjectAsTemplateInput): WorkspaceTemplate[];
+  renameTemplate(input: RenameTemplateInput): WorkspaceTemplate[];
+  deleteTemplate(templateId: string): WorkspaceTemplate[];
+  applyTemplate(input: ApplyTemplateInput): unknown;
+  importTemplates(serialized: string): {
+    templates: WorkspaceTemplate[];
+    importedCount: number;
+  };
+  exportTemplate(templateId: string): string;
+  exportAllTemplates(): string;
   createTab(input: CreateTabInput): unknown;
   renameTab(input: RenameTabInput): unknown;
   closeTab(tabId: string): unknown;
@@ -164,6 +182,87 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.deleteProject, (_event, projectId: string) =>
     appService!.deleteProject(projectId),
   );
+  ipcMain.handle(
+    IPC_CHANNELS.saveProjectAsTemplate,
+    (_event, input: SaveProjectAsTemplateInput) => appService!.saveProjectAsTemplate(input),
+  );
+  ipcMain.handle(IPC_CHANNELS.renameTemplate, (_event, input: RenameTemplateInput) =>
+    appService!.renameTemplate(input),
+  );
+  ipcMain.handle(IPC_CHANNELS.deleteTemplate, (_event, templateId: string) =>
+    appService!.deleteTemplate(templateId),
+  );
+  ipcMain.handle(IPC_CHANNELS.applyTemplate, (_event, input: ApplyTemplateInput) =>
+    appService!.applyTemplate(input),
+  );
+  ipcMain.handle(IPC_CHANNELS.importTemplates, async (): Promise<TemplateImportResult> => {
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, {
+          properties: ["openFile"],
+          filters: [{ name: "JSON files", extensions: ["json"] }],
+        })
+      : await dialog.showOpenDialog({
+          properties: ["openFile"],
+          filters: [{ name: "JSON files", extensions: ["json"] }],
+        });
+
+    if (result.canceled || !result.filePaths[0]) {
+      return {
+        templates: appService!.bootstrap().templates,
+        importedCount: 0,
+        filePath: null,
+      };
+    }
+
+    const filePath = result.filePaths[0];
+    const serialized = await fs.readFile(filePath, "utf8");
+    const imported = appService!.importTemplates(serialized);
+    return {
+      ...imported,
+      filePath,
+    };
+  });
+  ipcMain.handle(
+    IPC_CHANNELS.exportTemplate,
+    async (_event, templateId: string): Promise<TemplateExportResult> => {
+      const serialized = appService!.exportTemplate(templateId);
+      const result = mainWindow
+        ? await dialog.showSaveDialog(mainWindow, {
+            filters: [{ name: "JSON files", extensions: ["json"] }],
+            defaultPath: "template.json",
+          })
+        : await dialog.showSaveDialog({
+            filters: [{ name: "JSON files", extensions: ["json"] }],
+            defaultPath: "template.json",
+          });
+
+      if (result.canceled || !result.filePath) {
+        return { filePath: null };
+      }
+
+      await fs.writeFile(result.filePath, serialized, "utf8");
+      return { filePath: result.filePath };
+    },
+  );
+  ipcMain.handle(IPC_CHANNELS.exportAllTemplates, async (): Promise<TemplateExportResult> => {
+    const serialized = appService!.exportAllTemplates();
+    const result = mainWindow
+      ? await dialog.showSaveDialog(mainWindow, {
+          filters: [{ name: "JSON files", extensions: ["json"] }],
+          defaultPath: "templates.json",
+        })
+      : await dialog.showSaveDialog({
+          filters: [{ name: "JSON files", extensions: ["json"] }],
+          defaultPath: "templates.json",
+        });
+
+    if (result.canceled || !result.filePath) {
+      return { filePath: null };
+    }
+
+    await fs.writeFile(result.filePath, serialized, "utf8");
+    return { filePath: result.filePath };
+  });
   ipcMain.handle(IPC_CHANNELS.createTab, (_event, input: CreateTabInput) =>
     appService!.createTab(input),
   );

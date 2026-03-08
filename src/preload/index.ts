@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import { IPC_CHANNELS } from "../shared/ipc.js";
 import type {
   ActivateSessionInput,
+  ApplyTemplateInput,
   ApplyLayoutPresetInput,
   BootstrapData,
   CreateProjectInput,
@@ -10,14 +11,19 @@ import type {
   HistoryQuery,
   HydratedSession,
   ProjectWorkspace,
+  RenameTemplateInput,
   RenameTabInput,
   RecallHistoryInput,
   RecallHistoryResult,
   ResizeSessionInput,
+  SaveProjectAsTemplateInput,
   SetFocusedSessionInput,
   TermBagApi,
+  TemplateExportResult,
+  TemplateImportResult,
   TerminalEvent,
   UpdateProjectInput,
+  WorkspaceTemplate,
 } from "../shared/types.js";
 
 const api: TermBagApi = {
@@ -38,6 +44,24 @@ const api: TermBagApi = {
     ipcRenderer.invoke(IPC_CHANNELS.updateProject, input) as Promise<ProjectWorkspace>,
   deleteProject: (projectId) =>
     ipcRenderer.invoke(IPC_CHANNELS.deleteProject, projectId) as Promise<BootstrapData>,
+  saveProjectAsTemplate: (input: SaveProjectAsTemplateInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.saveProjectAsTemplate, input) as Promise<
+      WorkspaceTemplate[]
+    >,
+  renameTemplate: (input: RenameTemplateInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.renameTemplate, input) as Promise<WorkspaceTemplate[]>,
+  deleteTemplate: (templateId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.deleteTemplate, templateId) as Promise<
+      WorkspaceTemplate[]
+    >,
+  applyTemplate: (input: ApplyTemplateInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.applyTemplate, input) as Promise<ProjectWorkspace>,
+  importTemplates: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.importTemplates) as Promise<TemplateImportResult>,
+  exportTemplate: (templateId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.exportTemplate, templateId) as Promise<TemplateExportResult>,
+  exportAllTemplates: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.exportAllTemplates) as Promise<TemplateExportResult>,
   createTab: (input: CreateTabInput) =>
     ipcRenderer.invoke(IPC_CHANNELS.createTab, input) as Promise<ProjectWorkspace>,
   renameTab: (input: RenameTabInput) =>

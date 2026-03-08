@@ -12,7 +12,9 @@ import type {
   SavedTerminalSession,
   SavedWorkspaceTab,
   ShellProfile,
+  TemplateTab,
   TerminalSnapshot,
+  WorkspaceTemplate,
 } from "../../shared/types.js";
 
 interface CreateProjectParams {
@@ -47,6 +49,12 @@ interface SnapshotParams {
   snapshotFormat: string;
   transcriptText: string;
   byteCount: number;
+}
+
+interface CreateTemplateParams {
+  id: string;
+  name: string;
+  tabs: TemplateTab[];
 }
 
 const MIGRATIONS = [
@@ -224,6 +232,29 @@ function mapHistory(row: Record<string, unknown>): HistoryEntry {
     commandText: String(row.command_text),
     source: row.source as HistorySource,
     createdAt: String(row.created_at),
+  };
+}
+
+function parseTemplateTabs(rawValue: unknown): TemplateTab[] {
+  if (typeof rawValue !== "string" || !rawValue.trim()) {
+    throw new Error("Invalid stored template payload.");
+  }
+
+  const parsed = JSON.parse(rawValue) as { version?: number; tabs?: TemplateTab[] };
+  if (parsed?.version !== 1 || !Array.isArray(parsed.tabs) || parsed.tabs.length === 0) {
+    throw new Error("Invalid stored template payload.");
+  }
+
+  return parsed.tabs;
+}
+
+function mapTemplate(row: Record<string, unknown>): WorkspaceTemplate {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    tabs: parseTemplateTabs(row.payload_json),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
   };
 }
 
@@ -451,6 +482,31 @@ export class DatabaseService {
         this.db
           .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
           .run("009_tab_sessions_and_layouts", nowIso());
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
+
+    if (!existing.has("010_workspace_templates")) {
+      this.db.exec("BEGIN");
+      try {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS workspace_templates (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_workspace_templates_updated
+            ON workspace_templates(updated_at DESC, created_at DESC);
+        `);
+        this.db
+          .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
+          .run("010_workspace_templates", nowIso());
         this.db.exec("COMMIT");
       } catch (error) {
         this.db.exec("ROLLBACK");
@@ -783,6 +839,66 @@ export class DatabaseService {
     this.db.prepare("DELETE FROM projects WHERE id = ?").run(projectId);
   }
 
+  listTemplates(): WorkspaceTemplate[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, name, payload_json, created_at, updated_at
+         FROM workspace_templates
+         ORDER BY updated_at DESC, created_at DESC, name COLLATE NOCASE ASC`,
+      )
+      .all() as Record<string, unknown>[];
+    return rows.map(mapTemplate);
+  }
+
+  getTemplate(templateId: string): WorkspaceTemplate | null {
+    const row = this.db
+      .prepare(
+        `SELECT id, name, payload_json, created_at, updated_at
+         FROM workspace_templates
+         WHERE id = ?`,
+      )
+      .get(templateId) as Record<string, unknown> | undefined;
+    return row ? mapTemplate(row) : null;
+  }
+
+  createTemplate(params: CreateTemplateParams): WorkspaceTemplate {
+    const timestamp = nowIso();
+    this.db
+      .prepare(
+        `INSERT INTO workspace_templates (
+          id, name, payload_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        params.id,
+        params.name,
+        JSON.stringify({ version: 1, tabs: params.tabs }),
+        timestamp,
+        timestamp,
+      );
+    return this.getTemplate(params.id)!;
+  }
+
+  updateTemplate(template: WorkspaceTemplate): WorkspaceTemplate {
+    this.db
+      .prepare(
+        `UPDATE workspace_templates
+         SET name = ?, payload_json = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        template.name,
+        JSON.stringify({ version: 1, tabs: template.tabs }),
+        nowIso(),
+        template.id,
+      );
+    return this.getTemplate(template.id)!;
+  }
+
+  deleteTemplate(templateId: string): void {
+    this.db.prepare("DELETE FROM workspace_templates WHERE id = ?").run(templateId);
+  }
+
   listTabsForProject(projectId: string): SavedWorkspaceTab[] {
     const rows = this.db
       .prepare(
@@ -903,6 +1019,63 @@ export class DatabaseService {
     return {
       tab: this.getTab(params.tab.id)!,
       session: this.getSession(params.session.id)!,
+    };
+  }
+
+  createTabWithSessions(params: {
+    tab: CreateTabParams;
+    sessions: CreateSessionParams[];
+  }): { tab: SavedWorkspaceTab; sessions: SavedTerminalSession[] } {
+    const transaction = this.db.transaction(
+      (nextParams: { tab: CreateTabParams; sessions: CreateSessionParams[] }) => {
+        const timestamp = nowIso();
+        this.db
+          .prepare(
+            `INSERT INTO saved_terminal_tabs (
+              id, project_id, title, custom_title, restore_order, layout_json, focused_session_id,
+              was_open, last_activated_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+          )
+          .run(
+            nextParams.tab.id,
+            nextParams.tab.projectId,
+            nextParams.tab.title,
+            nextParams.tab.customTitle,
+            nextParams.tab.restoreOrder,
+            JSON.stringify(nextParams.tab.layout),
+            nextParams.tab.focusedSessionId,
+            timestamp,
+            timestamp,
+            timestamp,
+          );
+
+        const insertSession = this.db.prepare(
+          `INSERT INTO tab_shell_sessions (
+            id, tab_id, shell_profile_id, last_known_cwd, session_order, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        );
+
+        for (const session of nextParams.sessions) {
+          insertSession.run(
+            session.id,
+            session.tabId,
+            session.shellProfileId,
+            session.lastKnownCwd,
+            session.sessionOrder,
+            session.createdAt ?? timestamp,
+            session.updatedAt ?? timestamp,
+          );
+        }
+
+        this.touchProject(nextParams.tab.projectId);
+      },
+    );
+
+    transaction(params);
+
+    return {
+      tab: this.getTab(params.tab.id)!,
+      sessions: params.sessions.map((session) => this.getSession(session.id)!),
     };
   }
 

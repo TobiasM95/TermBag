@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  ApplyTemplateInput,
   ApplyLayoutPresetInput,
   BootstrapData,
   CreateProjectInput,
@@ -7,12 +8,17 @@ import type {
   HistoryEntry,
   Project,
   ProjectWorkspace,
+  RenameTemplateInput,
   RenameTabInput,
+  SaveProjectAsTemplateInput,
   SetFocusedSessionInput,
   SessionRuntimeSummary,
   ShellProfileAvailability,
   TerminalEvent,
+  TemplateExportResult,
+  TemplateImportResult,
   UpdateProjectInput,
+  WorkspaceTemplate,
 } from "../../shared/types";
 
 interface AppState {
@@ -21,6 +27,7 @@ interface AppState {
   error: string | null;
   projects: Project[];
   shellProfiles: ShellProfileAvailability[];
+  templates: WorkspaceTemplate[];
   selectedProjectId: string | null;
   workspaces: Record<string, ProjectWorkspace>;
   historyEntries: HistoryEntry[];
@@ -34,6 +41,13 @@ interface AppState {
   createProject(input: CreateProjectInput): Promise<void>;
   updateProject(input: UpdateProjectInput): Promise<void>;
   deleteProject(projectId: string): Promise<void>;
+  saveProjectAsTemplate(input: SaveProjectAsTemplateInput): Promise<void>;
+  renameTemplate(input: RenameTemplateInput): Promise<void>;
+  deleteTemplate(templateId: string): Promise<void>;
+  applyTemplate(input: ApplyTemplateInput): Promise<void>;
+  importTemplates(): Promise<TemplateImportResult | null>;
+  exportTemplate(templateId: string): Promise<TemplateExportResult | null>;
+  exportAllTemplates(): Promise<TemplateExportResult | null>;
   createTab(input: CreateTabInput): Promise<void>;
   renameTab(input: RenameTabInput): Promise<void>;
   closeTab(tabId: string): Promise<void>;
@@ -126,6 +140,17 @@ function persistLastActiveTabs(lastActiveTabs: Record<string, string>): void {
   );
 }
 
+function persistWorkspaceSelectedTab(workspace: ProjectWorkspace): void {
+  if (!workspace.selectedTabId) {
+    return;
+  }
+
+  persistLastActiveTabs({
+    ...getStoredLastActiveTabs(),
+    [workspace.project.id]: workspace.selectedTabId,
+  });
+}
+
 function getStoredSelectedProjectId(): string | null {
   if (typeof window === "undefined") {
     return null;
@@ -174,6 +199,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   error: null,
   projects: [],
   shellProfiles: [],
+  templates: [],
   selectedProjectId: null,
   workspaces: {},
   historyEntries: [],
@@ -200,6 +226,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         loading: false,
         projects: data.projects,
         shellProfiles: data.shellProfiles,
+        templates: data.templates,
         selectedProjectId,
       });
 
@@ -319,6 +346,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           loading: false,
           projects: bootstrapData.projects,
           shellProfiles: bootstrapData.shellProfiles,
+          templates: bootstrapData.templates,
           selectedProjectId: nextSelectedProjectId,
           workspaces: nextWorkspaces,
         };
@@ -352,6 +380,108 @@ export const useAppStore = create<AppState>((set, get) => ({
         loading: false,
         error: error instanceof Error ? error.message : "Failed to create tab.",
       });
+    }
+  },
+
+  async saveProjectAsTemplate(input: SaveProjectAsTemplateInput) {
+    set({ loading: true, error: null });
+    try {
+      const templates = await window.termbag.saveProjectAsTemplate(input);
+      set({ loading: false, templates });
+    } catch (error) {
+      set({
+        loading: false,
+        error: error instanceof Error ? error.message : "Failed to save template.",
+      });
+    }
+  },
+
+  async renameTemplate(input: RenameTemplateInput) {
+    set({ loading: true, error: null });
+    try {
+      const templates = await window.termbag.renameTemplate(input);
+      set({ loading: false, templates });
+    } catch (error) {
+      set({
+        loading: false,
+        error: error instanceof Error ? error.message : "Failed to rename template.",
+      });
+    }
+  },
+
+  async deleteTemplate(templateId: string) {
+    set({ loading: true, error: null });
+    try {
+      const templates = await window.termbag.deleteTemplate(templateId);
+      set({ loading: false, templates });
+    } catch (error) {
+      set({
+        loading: false,
+        error: error instanceof Error ? error.message : "Failed to delete template.",
+      });
+    }
+  },
+
+  async applyTemplate(input: ApplyTemplateInput) {
+    set({ loading: true, error: null });
+    try {
+      const workspace = await window.termbag.applyTemplate(input);
+      persistWorkspaceSelectedTab(workspace);
+      set((state) => ({
+        loading: false,
+        workspaces: mergeWorkspace(state.workspaces, workspace),
+        projects: upsertProject(state.projects, workspace.project),
+      }));
+    } catch (error) {
+      set({
+        loading: false,
+        error: error instanceof Error ? error.message : "Failed to apply template.",
+      });
+    }
+  },
+
+  async importTemplates() {
+    set({ loading: true, error: null });
+    try {
+      const result = await window.termbag.importTemplates();
+      set({ loading: false, templates: result.templates });
+      return result;
+    } catch (error) {
+      set({
+        loading: false,
+        error: error instanceof Error ? error.message : "Failed to import templates.",
+      });
+      return null;
+    }
+  },
+
+  async exportTemplate(templateId: string) {
+    set({ loading: true, error: null });
+    try {
+      const result = await window.termbag.exportTemplate(templateId);
+      set({ loading: false });
+      return result;
+    } catch (error) {
+      set({
+        loading: false,
+        error: error instanceof Error ? error.message : "Failed to export template.",
+      });
+      return null;
+    }
+  },
+
+  async exportAllTemplates() {
+    set({ loading: true, error: null });
+    try {
+      const result = await window.termbag.exportAllTemplates();
+      set({ loading: false });
+      return result;
+    } catch (error) {
+      set({
+        loading: false,
+        error: error instanceof Error ? error.message : "Failed to export templates.",
+      });
+      return null;
     }
   },
 

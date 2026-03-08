@@ -12,6 +12,7 @@ afterEach(() => {
     error: null,
     projects: [],
     shellProfiles: [],
+    templates: [],
     selectedProjectId: null,
     workspaces: {},
     historyEntries: [],
@@ -37,6 +38,7 @@ describe("useAppStore", () => {
         },
       ],
       shellProfiles: [],
+      templates: [],
       selectedProjectId: "project-1",
       workspaces: {
         "project-1": {
