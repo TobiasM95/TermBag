@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  ApplyLayoutPresetInput,
   BootstrapData,
   CreateProjectInput,
   CreateTabInput,
@@ -7,6 +8,7 @@ import type {
   Project,
   ProjectWorkspace,
   RenameTabInput,
+  SetFocusedSessionInput,
   SessionRuntimeSummary,
   ShellProfileAvailability,
   TerminalEvent,
@@ -35,6 +37,8 @@ interface AppState {
   createTab(input: CreateTabInput): Promise<void>;
   renameTab(input: RenameTabInput): Promise<void>;
   closeTab(tabId: string): Promise<void>;
+  applyLayoutPreset(input: ApplyLayoutPresetInput): Promise<void>;
+  setFocusedSession(input: SetFocusedSessionInput): Promise<void>;
   loadHistory(projectId: string): Promise<void>;
   applyTerminalEvent(event: TerminalEvent): void;
   setTabRuntime(projectId: string, runtime: SessionRuntimeSummary): void;
@@ -387,6 +391,43 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         loading: false,
         error: error instanceof Error ? error.message : "Failed to close tab.",
+      });
+    }
+  },
+
+  async applyLayoutPreset(input: ApplyLayoutPresetInput) {
+    set({ loading: true, error: null });
+    try {
+      const workspace = applyPreferredSelectedTab(
+        await window.termbag.applyLayoutPreset(input),
+        getStoredLastActiveTabs(),
+      );
+      set((state) => ({
+        loading: false,
+        workspaces: mergeWorkspace(state.workspaces, workspace),
+        projects: upsertProject(state.projects, workspace.project),
+      }));
+    } catch (error) {
+      set({
+        loading: false,
+        error: error instanceof Error ? error.message : "Failed to apply layout.",
+      });
+    }
+  },
+
+  async setFocusedSession(input: SetFocusedSessionInput) {
+    try {
+      const workspace = applyPreferredSelectedTab(
+        await window.termbag.setFocusedSession(input),
+        getStoredLastActiveTabs(),
+      );
+      set((state) => ({
+        workspaces: mergeWorkspace(state.workspaces, workspace),
+        projects: upsertProject(state.projects, workspace.project),
+      }));
+    } catch (error) {
+      set({
+        error: error instanceof Error ? error.message : "Failed to focus terminal pane.",
       });
     }
   },

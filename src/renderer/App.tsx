@@ -3,8 +3,11 @@ import { TerminalPane } from "./components/TerminalPane";
 import { useAppStore } from "./store/app-store";
 import type {
   CreateProjectInput,
+  LayoutPresetId,
+  PersistedTabLayout,
   Project,
   ShellProfileAvailability,
+  TabLayoutNode,
   UpdateProjectInput,
   WorkspaceSession,
   WorkspaceTab,
@@ -39,6 +42,45 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = "termbag-sidebar-collapsed";
 const SCROLLBAR_MODE_STORAGE_KEY = "termbag-scrollbar-mode";
 const PROJECT_HOTKEY_MODIFIER_STORAGE_KEY = "termbag-project-hotkey-modifier";
 const TAB_HOTKEY_MODIFIER_STORAGE_KEY = "termbag-tab-hotkey-modifier";
+
+type LayoutPresetDefinition = {
+  id: LayoutPresetId;
+  label: string;
+  description: string;
+};
+
+const LAYOUT_PRESETS: LayoutPresetDefinition[] = [
+  {
+    id: "single",
+    label: "Single",
+    description: "One shell filling the entire workspace.",
+  },
+  {
+    id: "split_horizontal",
+    label: "Horizontal split",
+    description: "Two shells stacked top and bottom.",
+  },
+  {
+    id: "split_vertical",
+    label: "Vertical split",
+    description: "Two shells side by side.",
+  },
+  {
+    id: "grid_2x2",
+    label: "2x2 grid",
+    description: "Four shells in an even grid.",
+  },
+  {
+    id: "main_left_stack_right",
+    label: "1 left 2 right",
+    description: "One large pane on the left with two stacked on the right.",
+  },
+  {
+    id: "stack_left_main_right",
+    label: "2 left 1 right",
+    description: "Two stacked panes on the left with one large pane on the right.",
+  },
+];
 
 function detectMacPlatform(): boolean {
   if (typeof navigator === "undefined") {
@@ -177,6 +219,68 @@ function getShellLabel(shellProfileId: string): string {
   }
 }
 
+function isTwoLeafSplit(
+  node: TabLayoutNode,
+  direction: "row" | "column",
+): boolean {
+  return (
+    node.kind === "split" &&
+    node.direction === direction &&
+    node.children.length === 2 &&
+    node.children[0]?.kind === "leaf" &&
+    node.children[1]?.kind === "leaf"
+  );
+}
+
+function detectLayoutPresetId(layout: PersistedTabLayout): LayoutPresetId | null {
+  const { root } = layout;
+
+  if (root.kind === "leaf") {
+    return "single";
+  }
+
+  if (isTwoLeafSplit(root, "column")) {
+    return "split_horizontal";
+  }
+
+  if (isTwoLeafSplit(root, "row")) {
+    return "split_vertical";
+  }
+
+  if (
+    root.direction === "column" &&
+    root.children.length === 2 &&
+    root.children[0] &&
+    root.children[1] &&
+    isTwoLeafSplit(root.children[0], "row") &&
+    isTwoLeafSplit(root.children[1], "row")
+  ) {
+    return "grid_2x2";
+  }
+
+  if (
+    root.direction === "row" &&
+    root.children.length === 2 &&
+    root.children[0]?.kind === "leaf" &&
+    root.children[1] &&
+    isTwoLeafSplit(root.children[1], "column")
+  ) {
+    return "main_left_stack_right";
+  }
+
+  if (
+    root.direction === "row" &&
+    root.children.length === 2 &&
+    root.children[0] &&
+    isTwoLeafSplit(root.children[0], "column") &&
+    root.children[1]?.kind === "leaf"
+  ) {
+    return "stack_left_main_right";
+  }
+
+  return null;
+}
+
 export function App() {
   const hasPreloadApi =
     typeof window !== "undefined" && typeof window.termbag !== "undefined";
@@ -207,6 +311,8 @@ export function App() {
     createTab,
     renameTab,
     closeTab,
+    applyLayoutPreset,
+    setFocusedSession,
     loadHistory,
     applyTerminalEvent,
     clearError,
@@ -215,6 +321,7 @@ export function App() {
   const [modalState, setModalState] = useState<ModalState>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [layoutsOpen, setLayoutsOpen] = useState(false);
   const [shellPickerOpen, setShellPickerOpen] = useState(false);
   const [tabContextMenu, setTabContextMenu] = useState<TabContextMenuState>(null);
   const [renameTabState, setRenameTabState] = useState<RenameTabState>(null);
@@ -395,6 +502,22 @@ export function App() {
     );
   }, [activeTab]);
 
+  const activeSessionsById = useMemo(() => {
+    if (!activeTab) {
+      return new Map<string, WorkspaceSession>();
+    }
+
+    return new Map(activeTab.sessions.map((session) => [session.id, session]));
+  }, [activeTab]);
+
+  const activeLayoutPresetId = useMemo(() => {
+    if (!activeTab) {
+      return null;
+    }
+
+    return detectLayoutPresetId(activeTab.layout);
+  }, [activeTab]);
+
   useEffect(() => {
     if (
       selectedWorkspace &&
@@ -441,7 +564,14 @@ export function App() {
         return;
       }
 
-      if (modalState || historyOpen || settingsOpen || shellPickerOpen || renameTabState) {
+      if (
+        modalState ||
+        historyOpen ||
+        settingsOpen ||
+        layoutsOpen ||
+        shellPickerOpen ||
+        renameTabState
+      ) {
         return;
       }
 
@@ -512,7 +642,9 @@ export function App() {
     selectProject,
     selectedWorkspace,
     setSelectedTab,
+    setFocusedSession,
     settingsOpen,
+    layoutsOpen,
     shellPickerOpen,
     sortedProjects,
     tabHotkeyModifier,
@@ -720,7 +852,18 @@ export function App() {
           <div className="sidebar__bottom">
             <button
               type="button"
-              className="ghost-button sidebar__settings-button"
+              className="ghost-button sidebar__bottom-button sidebar__layouts-button"
+              onClick={() => setLayoutsOpen(true)}
+              title={activeTab ? "Layouts" : "Select a tab to change layouts"}
+              aria-label="Layouts"
+              disabled={!activeTab}
+            >
+              <LayoutsIcon />
+              {!sidebarCollapsed ? <span>Layouts</span> : null}
+            </button>
+            <button
+              type="button"
+              className="ghost-button sidebar__bottom-button sidebar__settings-button"
               onClick={() => setSettingsOpen(true)}
               title="Settings"
               aria-label="Settings"
@@ -760,12 +903,24 @@ export function App() {
 
           {selectedProject && selectedWorkspace ? (
             <div className="workspace-session">
-              {activeTab && activeSession ? (
-                <TerminalPane
+              {activeTab ? (
+                <TabLayoutView
                   project={selectedProject}
                   tab={activeTab}
-                  session={activeSession}
+                  node={activeTab.layout.root}
+                  sessionsById={activeSessionsById}
+                  focusedSessionId={activeTab.focusedSessionId}
                   themeMode={themeMode}
+                  onFocusSession={(sessionId) => {
+                    if (activeTab.focusedSessionId === sessionId) {
+                      return;
+                    }
+
+                    void setFocusedSession({
+                      tabId: activeTab.id,
+                      sessionId,
+                    });
+                  }}
                 />
               ) : null}
             </div>
@@ -802,6 +957,20 @@ export function App() {
           onScrollbarModeChange={setScrollbarMode}
           onProjectHotkeyModifierChange={updateProjectHotkeyModifier}
           onTabHotkeyModifierChange={updateTabHotkeyModifier}
+        />
+      ) : null}
+
+      {layoutsOpen && activeTab ? (
+        <LayoutsModal
+          activePresetId={activeLayoutPresetId}
+          onClose={() => setLayoutsOpen(false)}
+          onSelect={async (presetId) => {
+            await applyLayoutPreset({
+              tabId: activeTab.id,
+              presetId,
+            });
+            setLayoutsOpen(false);
+          }}
         />
       ) : null}
 
@@ -889,6 +1058,81 @@ export function App() {
         />
       ) : null}
     </>
+  );
+}
+
+interface TabLayoutViewProps {
+  project: Project;
+  tab: WorkspaceTab;
+  node: TabLayoutNode;
+  sessionsById: Map<string, WorkspaceSession>;
+  focusedSessionId: string;
+  themeMode: ThemeMode;
+  onFocusSession(sessionId: string): void;
+}
+
+function TabLayoutView({
+  project,
+  tab,
+  node,
+  sessionsById,
+  focusedSessionId,
+  themeMode,
+  onFocusSession,
+}: TabLayoutViewProps) {
+  if (node.kind === "leaf") {
+    const session = sessionsById.get(node.sessionId);
+
+    if (!session) {
+      return (
+        <div className="workspace-layout__leaf workspace-layout__leaf--missing">
+          <div className="terminal-state terminal-state--error">
+            <strong>Pane unavailable</strong>
+            <p>The saved layout references a session that is no longer present.</p>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        className={`workspace-layout__leaf ${session.id === focusedSessionId ? "workspace-layout__leaf--focused" : ""}`}
+      >
+        <TerminalPane
+          project={project}
+          tab={tab}
+          session={session}
+          themeMode={themeMode}
+          isFocused={session.id === focusedSessionId}
+          onFocusSession={() => onFocusSession(session.id)}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className={`workspace-layout workspace-layout--split workspace-layout--${node.direction}`}>
+      {node.children.map((child, index) => (
+        <div
+          key={child.id}
+          className="workspace-layout__segment"
+          style={{
+            flexGrow: node.sizes[index] ?? 1,
+            flexBasis: 0,
+          }}
+        >
+          <TabLayoutView
+            project={project}
+            tab={tab}
+            node={child}
+            sessionsById={sessionsById}
+            focusedSessionId={focusedSessionId}
+            themeMode={themeMode}
+            onFocusSession={onFocusSession}
+          />
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -981,6 +1225,73 @@ function SettingsIcon() {
   );
 }
 
+function LayoutsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="ui-icon" aria-hidden="true">
+      <rect x="2" y="2" width="5" height="5" fill="none" stroke="currentColor" strokeWidth="1.1" />
+      <rect x="9" y="2" width="5" height="5" fill="none" stroke="currentColor" strokeWidth="1.1" />
+      <rect x="2" y="9" width="5" height="5" fill="none" stroke="currentColor" strokeWidth="1.1" />
+      <rect x="9" y="9" width="5" height="5" fill="none" stroke="currentColor" strokeWidth="1.1" />
+    </svg>
+  );
+}
+
+function LayoutPreviewIcon({ presetId }: { presetId: LayoutPresetId }) {
+  const baseProps = {
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 4,
+  } as const;
+
+  switch (presetId) {
+    case "single":
+      return (
+        <svg viewBox="0 0 100 72" className="layout-preview__icon" aria-hidden="true">
+          <rect x="6" y="6" width="88" height="60" {...baseProps} />
+        </svg>
+      );
+    case "split_horizontal":
+      return (
+        <svg viewBox="0 0 100 72" className="layout-preview__icon" aria-hidden="true">
+          <rect x="6" y="6" width="88" height="28" {...baseProps} />
+          <rect x="6" y="38" width="88" height="28" {...baseProps} />
+        </svg>
+      );
+    case "split_vertical":
+      return (
+        <svg viewBox="0 0 100 72" className="layout-preview__icon" aria-hidden="true">
+          <rect x="6" y="6" width="42" height="60" {...baseProps} />
+          <rect x="52" y="6" width="42" height="60" {...baseProps} />
+        </svg>
+      );
+    case "grid_2x2":
+      return (
+        <svg viewBox="0 0 100 72" className="layout-preview__icon" aria-hidden="true">
+          <rect x="6" y="6" width="42" height="28" {...baseProps} />
+          <rect x="52" y="6" width="42" height="28" {...baseProps} />
+          <rect x="6" y="38" width="42" height="28" {...baseProps} />
+          <rect x="52" y="38" width="42" height="28" {...baseProps} />
+        </svg>
+      );
+    case "main_left_stack_right":
+      return (
+        <svg viewBox="0 0 100 72" className="layout-preview__icon" aria-hidden="true">
+          <rect x="6" y="6" width="42" height="60" {...baseProps} />
+          <rect x="52" y="6" width="42" height="28" {...baseProps} />
+          <rect x="52" y="38" width="42" height="28" {...baseProps} />
+        </svg>
+      );
+    case "stack_left_main_right":
+      return (
+        <svg viewBox="0 0 100 72" className="layout-preview__icon" aria-hidden="true">
+          <rect x="6" y="6" width="42" height="28" {...baseProps} />
+          <rect x="6" y="38" width="42" height="28" {...baseProps} />
+          <rect x="52" y="6" width="42" height="60" {...baseProps} />
+        </svg>
+      );
+  }
+}
+
 interface FloatingErrorProps {
   message: string;
 }
@@ -1053,6 +1364,55 @@ function ShellPickerModal({
               </span>
             </button>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface LayoutsModalProps {
+  activePresetId: LayoutPresetId | null;
+  onClose(): void;
+  onSelect(presetId: LayoutPresetId): Promise<void>;
+}
+
+function LayoutsModal({ activePresetId, onClose, onSelect }: LayoutsModalProps) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal layouts-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="history-header">
+          <div>
+            <h3>Layouts</h3>
+            <p>Apply a fixed pane arrangement to the current tab. Hidden sessions stay cached.</p>
+          </div>
+          <button type="button" className="ghost-button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="layout-picker-list">
+          {LAYOUT_PRESETS.map((preset) => {
+            const isActive = activePresetId === preset.id;
+
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                className={`layout-picker-item ${isActive ? "layout-picker-item--active" : ""}`}
+                onClick={() => void onSelect(preset.id)}
+              >
+                <span className="layout-preview">
+                  <LayoutPreviewIcon presetId={preset.id} />
+                </span>
+                <span className="layout-picker-item__content">
+                  <strong>{preset.label}</strong>
+                  <span>{preset.description}</span>
+                  {isActive ? (
+                    <span className="layout-picker-item__badge">Current layout</span>
+                  ) : null}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>

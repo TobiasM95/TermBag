@@ -12,12 +12,14 @@ import {
 import { IPC_CHANNELS } from "../shared/ipc.js";
 import type {
   ActivateSessionInput,
+  ApplyLayoutPresetInput,
   CreateProjectInput,
   CreateTabInput,
   HistoryQuery,
   RenameTabInput,
   RecallHistoryInput,
   ResizeSessionInput,
+  SetFocusedSessionInput,
   UpdateProjectInput,
 } from "../shared/types.js";
 import { describeStartupFailure } from "./startup-errors.js";
@@ -37,6 +39,8 @@ interface AppServiceContract {
   createTab(input: CreateTabInput): unknown;
   renameTab(input: RenameTabInput): unknown;
   closeTab(tabId: string): unknown;
+  applyLayoutPreset(input: ApplyLayoutPresetInput): unknown;
+  setFocusedSession(input: SetFocusedSessionInput): unknown;
   activateSession(input: ActivateSessionInput): unknown;
   resizeSession(sessionId: string, cols: number, rows: number): void;
   writeToSession(sessionId: string, data: string): void;
@@ -168,6 +172,12 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle(IPC_CHANNELS.closeTab, (_event, tabId: string) =>
     appService!.closeTab(tabId),
+  );
+  ipcMain.handle(IPC_CHANNELS.applyLayoutPreset, (_event, input: ApplyLayoutPresetInput) =>
+    appService!.applyLayoutPreset(input),
+  );
+  ipcMain.handle(IPC_CHANNELS.setFocusedSession, (_event, input: SetFocusedSessionInput) =>
+    appService!.setFocusedSession(input),
   );
   ipcMain.handle(IPC_CHANNELS.activateSession, (_event, input: ActivateSessionInput) =>
     appService!.activateSession(input),

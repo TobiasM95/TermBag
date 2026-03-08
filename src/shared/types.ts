@@ -46,6 +46,14 @@ export interface PersistedTabLayout {
   root: TabLayoutNode;
 }
 
+export type LayoutPresetId =
+  | "single"
+  | "split_horizontal"
+  | "split_vertical"
+  | "grid_2x2"
+  | "main_left_stack_right"
+  | "stack_left_main_right";
+
 export interface SavedWorkspaceTab {
   id: string;
   projectId: string;
@@ -151,6 +159,16 @@ export interface RenameTabInput {
   title: string;
 }
 
+export interface ApplyLayoutPresetInput {
+  tabId: string;
+  presetId: LayoutPresetId;
+}
+
+export interface SetFocusedSessionInput {
+  tabId: string;
+  sessionId: string;
+}
+
 export interface ActivateSessionInput {
   sessionId: string;
   cols: number;
@@ -219,6 +237,8 @@ export interface TermBagApi {
   createTab(input: CreateTabInput): Promise<ProjectWorkspace>;
   renameTab(input: RenameTabInput): Promise<ProjectWorkspace>;
   closeTab(tabId: string): Promise<ProjectWorkspace>;
+  applyLayoutPreset(input: ApplyLayoutPresetInput): Promise<ProjectWorkspace>;
+  setFocusedSession(input: SetFocusedSessionInput): Promise<ProjectWorkspace>;
   activateSession(input: ActivateSessionInput): Promise<HydratedSession>;
   resizeSession(input: ResizeSessionInput): Promise<void>;
   writeToSession(sessionId: string, data: string): Promise<void>;

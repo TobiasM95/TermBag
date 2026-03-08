@@ -1,25 +1,33 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
-import { collectLayoutSessionIds, createSingleLeafLayout, findFirstLayoutSessionId } from "../../shared/layout.js";
+import {
+  collectLayoutSessionIds,
+  createLayoutFromPreset,
+  createSingleLeafLayout,
+  findFirstLayoutSessionId,
+  flattenLayoutLeafSessionIds,
+  getLayoutPresetLeafCount,
+} from "../../shared/layout.js";
 import { deriveTabTitle, normalizeWindowsPath } from "../../shared/paths.js";
 import type {
   ActivateSessionInput,
+  ApplyLayoutPresetInput,
   BootstrapData,
   CreateProjectInput,
   CreateTabInput,
   HistoryEntry,
   HydratedSession,
+  LayoutPresetId,
   Project,
   ProjectWorkspace,
   RenameTabInput,
   RecallHistoryResult,
   SavedTerminalSession,
   SavedWorkspaceTab,
-  SessionRuntimeSummary,
+  SetFocusedSessionInput,
   ShellProfile,
   ShellProfileAvailability,
   UpdateProjectInput,
-  WorkspaceSession,
   WorkspaceTab,
 } from "../../shared/types.js";
 import { DatabaseService } from "./database.js";
@@ -161,6 +169,64 @@ export class AppService {
     return this.getProjectWorkspace(tab.projectId);
   }
 
+  applyLayoutPreset(input: ApplyLayoutPresetInput): ProjectWorkspace {
+    const tab = this.normalizeTabState(this.requireTab(input.tabId));
+    let sessions = this.requireSessionsForTab(tab.id);
+    const requiredLeafCount = getLayoutPresetLeafCount(input.presetId);
+
+    if (sessions.length < requiredLeafCount) {
+      const sourceSession = this.resolvePresetSourceSession(tab, sessions);
+      for (let sessionOrder = sessions.length + 1; sessionOrder <= requiredLeafCount; sessionOrder += 1) {
+        const nextSession = this.database.createSession({
+          id: crypto.randomUUID(),
+          tabId: tab.id,
+          shellProfileId: sourceSession.shellProfileId,
+          lastKnownCwd: sourceSession.lastKnownCwd,
+          sessionOrder,
+        });
+        sessions = [...sessions, nextSession];
+      }
+    }
+
+    const visibleSessionIds = sessions
+      .slice(0, requiredLeafCount)
+      .map((session) => session.id);
+    const nextLayout = createLayoutFromPreset(input.presetId, visibleSessionIds);
+    const nextFocusedSessionId = visibleSessionIds.includes(tab.focusedSessionId)
+      ? tab.focusedSessionId
+      : visibleSessionIds[0]!;
+
+    this.database.updateTab({
+      ...tab,
+      layout: nextLayout,
+      focusedSessionId: nextFocusedSessionId,
+      title:
+        tab.customTitle ??
+        this.deriveAutomaticTabTitleForFocusedSessionId(nextFocusedSessionId, sessions),
+    });
+
+    return this.getProjectWorkspace(tab.projectId);
+  }
+
+  setFocusedSession(input: SetFocusedSessionInput): ProjectWorkspace {
+    const tab = this.normalizeTabState(this.requireTab(input.tabId));
+    const sessions = this.requireSessionsForTab(tab.id);
+    const targetSession = sessions.find((session) => session.id === input.sessionId);
+    if (!targetSession) {
+      throw new Error(`Session does not belong to tab: ${input.sessionId}`);
+    }
+
+    this.database.updateTab({
+      ...tab,
+      focusedSessionId: targetSession.id,
+      title:
+        tab.customTitle ??
+        this.deriveAutomaticTabTitleForFocusedSessionId(targetSession.id, sessions),
+    });
+
+    return this.getProjectWorkspace(tab.projectId);
+  }
+
   async activateSession(input: ActivateSessionInput): Promise<HydratedSession> {
     const session = this.requireSession(input.sessionId);
     const tab = this.normalizeTabState(this.requireTab(session.tabId));
@@ -296,6 +362,28 @@ export class AppService {
       sessions.find((session) => session.id === tab.focusedSessionId) ?? sessions[0]!;
     const shellProfile = this.requireShellProfile(focusedSession.shellProfileId);
     return deriveTabTitle(focusedSession.lastKnownCwd, shellProfile.label);
+  }
+
+  private deriveAutomaticTabTitleForFocusedSessionId(
+    focusedSessionId: string,
+    sessions: SavedTerminalSession[],
+  ): string {
+    const focusedSession =
+      sessions.find((session) => session.id === focusedSessionId) ?? sessions[0]!;
+    const shellProfile = this.requireShellProfile(focusedSession.shellProfileId);
+    return deriveTabTitle(focusedSession.lastKnownCwd, shellProfile.label);
+  }
+
+  private resolvePresetSourceSession(
+    tab: SavedWorkspaceTab,
+    sessions: SavedTerminalSession[],
+  ): SavedTerminalSession {
+    const firstVisibleSessionId = flattenLayoutLeafSessionIds(tab.layout)[0];
+    return (
+      sessions.find((session) => session.id === firstVisibleSessionId) ??
+      sessions.find((session) => session.id === tab.focusedSessionId) ??
+      sessions[0]!
+    );
   }
 
   private requireProject(projectId: string): Project {

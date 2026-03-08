@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import { IPC_CHANNELS } from "../shared/ipc.js";
 import type {
   ActivateSessionInput,
+  ApplyLayoutPresetInput,
   BootstrapData,
   CreateProjectInput,
   CreateTabInput,
@@ -13,6 +14,7 @@ import type {
   RecallHistoryInput,
   RecallHistoryResult,
   ResizeSessionInput,
+  SetFocusedSessionInput,
   TermBagApi,
   TerminalEvent,
   UpdateProjectInput,
@@ -42,6 +44,10 @@ const api: TermBagApi = {
     ipcRenderer.invoke(IPC_CHANNELS.renameTab, input) as Promise<ProjectWorkspace>,
   closeTab: (tabId) =>
     ipcRenderer.invoke(IPC_CHANNELS.closeTab, tabId) as Promise<ProjectWorkspace>,
+  applyLayoutPreset: (input: ApplyLayoutPresetInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.applyLayoutPreset, input) as Promise<ProjectWorkspace>,
+  setFocusedSession: (input: SetFocusedSessionInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.setFocusedSession, input) as Promise<ProjectWorkspace>,
   activateSession: (input: ActivateSessionInput) =>
     ipcRenderer.invoke(IPC_CHANNELS.activateSession, input) as Promise<HydratedSession>,
   resizeSession: (input: ResizeSessionInput) =>

@@ -906,6 +906,32 @@ export class DatabaseService {
     };
   }
 
+  createSession(params: CreateSessionParams): SavedTerminalSession {
+    const timestamp = nowIso();
+    this.db
+      .prepare(
+        `INSERT INTO tab_shell_sessions (
+          id, tab_id, shell_profile_id, last_known_cwd, session_order, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        params.id,
+        params.tabId,
+        params.shellProfileId,
+        params.lastKnownCwd,
+        params.sessionOrder,
+        params.createdAt ?? timestamp,
+        params.updatedAt ?? timestamp,
+      );
+
+    const tab = this.getTab(params.tabId);
+    if (tab) {
+      this.touchProject(tab.projectId);
+    }
+
+    return this.getSession(params.id)!;
+  }
+
   updateTab(tab: SavedWorkspaceTab): SavedWorkspaceTab {
     this.db
       .prepare(

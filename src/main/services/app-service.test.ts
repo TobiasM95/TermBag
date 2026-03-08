@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { flattenLayoutLeafSessionIds } from "../../shared/layout.js";
 import type {
   HistoryEntry,
   PersistedTabLayout,
@@ -138,6 +139,25 @@ class FakeDatabaseService {
     return session;
   }
 
+  createSession(params: {
+    id: string;
+    tabId: string;
+    shellProfileId: string;
+    lastKnownCwd: string | null;
+    sessionOrder: number;
+    createdAt?: string;
+    updatedAt?: string;
+  }): SavedTerminalSession {
+    const timestamp = new Date().toISOString();
+    const session: SavedTerminalSession = {
+      ...params,
+      createdAt: params.createdAt ?? timestamp,
+      updatedAt: params.updatedAt ?? timestamp,
+    };
+    this.sessions.set(session.id, session);
+    return session;
+  }
+
   markTabActivated(tabId: string): SavedWorkspaceTab {
     const tab = this.tabs.get(tabId);
     if (!tab) {
@@ -261,5 +281,90 @@ describe("AppService", () => {
     const afterClose = service.closeTab(firstTabId);
     expect(afterClose.tabs).toHaveLength(1);
     expect(ptyManager.closedTabIds).toContain(firstTabId);
+  });
+
+  it("applies layout presets by creating visible sessions and caching hidden ones", () => {
+    const service = new AppService(
+      new FakeDatabaseService() as never,
+      new FakeShellCatalog() as never,
+      new FakePtyManager() as never,
+    );
+
+    const workspace = service.createProject({
+      name: "Repo",
+      rootPath: "C:\\Work\\Repo",
+    });
+    const initialTab = workspace.tabs[0]!;
+    const initialSession = initialTab.sessions[0]!;
+
+    const expandedWorkspace = service.applyLayoutPreset({
+      tabId: initialTab.id,
+      presetId: "grid_2x2",
+    });
+    const expandedTab = expandedWorkspace.tabs[0]!;
+
+    expect(expandedTab.sessions).toHaveLength(4);
+    expect(flattenLayoutLeafSessionIds(expandedTab.layout)).toEqual(
+      expandedTab.sessions.slice(0, 4).map((session) => session.id),
+    );
+    expect(
+      expandedTab.sessions
+        .slice(1)
+        .every((session) => session.lastKnownCwd === initialSession.lastKnownCwd),
+    ).toBe(true);
+    expect(
+      expandedTab.sessions
+        .slice(1)
+        .every((session) => session.shellProfileId === initialSession.shellProfileId),
+    ).toBe(true);
+
+    const hiddenFocusSessionId = expandedTab.sessions[3]!.id;
+    service.setFocusedSession({
+      tabId: expandedTab.id,
+      sessionId: hiddenFocusSessionId,
+    });
+
+    const collapsedWorkspace = service.applyLayoutPreset({
+      tabId: expandedTab.id,
+      presetId: "single",
+    });
+    const collapsedTab = collapsedWorkspace.tabs[0]!;
+
+    expect(collapsedTab.sessions).toHaveLength(4);
+    expect(collapsedTab.focusedSessionId).toBe(initialSession.id);
+    expect(flattenLayoutLeafSessionIds(collapsedTab.layout)).toEqual([initialSession.id]);
+    expect(collapsedTab.sessions[3]!.id).toBe(hiddenFocusSessionId);
+  });
+
+  it("persists focused session changes for visible panes", () => {
+    const service = new AppService(
+      new FakeDatabaseService() as never,
+      new FakeShellCatalog() as never,
+      new FakePtyManager() as never,
+    );
+
+    const workspace = service.createProject({
+      name: "Repo",
+      rootPath: "C:\\Work\\Repo",
+    });
+    const tabId = workspace.tabs[0]!.id;
+
+    const splitWorkspace = service.applyLayoutPreset({
+      tabId,
+      presetId: "split_vertical",
+    });
+    const splitTab = splitWorkspace.tabs[0]!;
+    const secondSessionId = splitTab.sessions[1]!.id;
+
+    const focusedWorkspace = service.setFocusedSession({
+      tabId,
+      sessionId: secondSessionId,
+    });
+    const focusedTab = focusedWorkspace.tabs[0]!;
+
+    expect(focusedTab.focusedSessionId).toBe(secondSessionId);
+    expect(flattenLayoutLeafSessionIds(focusedTab.layout)).toEqual(
+      splitTab.sessions.slice(0, 2).map((session) => session.id),
+    );
   });
 });

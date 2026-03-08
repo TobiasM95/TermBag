@@ -10,6 +10,8 @@ export const IPC_CHANNELS = {
   createTab: "tabs:create",
   renameTab: "tabs:rename",
   closeTab: "tabs:close",
+  applyLayoutPreset: "tabs:applyLayoutPreset",
+  setFocusedSession: "tabs:setFocusedSession",
   activateSession: "sessions:activate",
   resizeSession: "sessions:resize",
   writeToSession: "sessions:write",

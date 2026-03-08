@@ -10,6 +10,8 @@ interface TerminalPaneProps {
   tab: WorkspaceTab;
   session: WorkspaceSession;
   themeMode: "dark" | "light";
+  isFocused: boolean;
+  onFocusSession(): void;
 }
 
 type PendingOutput = {
@@ -41,8 +43,16 @@ function isPasteShortcut(event: KeyboardEvent): boolean {
   return (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "v";
 }
 
-export function TerminalPane({ project, tab, session, themeMode }: TerminalPaneProps) {
+export function TerminalPane({
+  project,
+  tab,
+  session,
+  themeMode,
+  isFocused,
+  onFocusSession,
+}: TerminalPaneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const terminalRef = useRef<Terminal | null>(null);
   const restartRequestedRef = useRef(false);
   const hydrationCompleteRef = useRef(false);
   const pendingOutputRef = useRef<PendingOutput[]>([]);
@@ -112,6 +122,7 @@ export function TerminalPane({ project, tab, session, themeMode }: TerminalPaneP
       scrollback: 3000,
       theme: terminalTheme,
     });
+    terminalRef.current = terminal;
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(hostRef.current);
@@ -154,7 +165,9 @@ export function TerminalPane({ project, tab, session, themeMode }: TerminalPaneP
 
       return true;
     });
-    terminal.focus();
+    if (isFocused) {
+      terminal.focus();
+    }
 
     const fitTerminal = (): TerminalSize => {
       fitAddon.fit();
@@ -262,7 +275,9 @@ export function TerminalPane({ project, tab, session, themeMode }: TerminalPaneP
       const settledSize = fitTerminal();
       sendResizeIfNeeded(settledSize);
       terminal.scrollToBottom();
-      terminal.focus();
+      if (isFocused) {
+        terminal.focus();
+      }
 
       return () => {
         resizeObserver.disconnect();
@@ -282,15 +297,26 @@ export function TerminalPane({ project, tab, session, themeMode }: TerminalPaneP
       disposeResizeObserver?.();
       disposeOutput();
       disposeInput.dispose();
+      terminalRef.current = null;
       terminal.dispose();
     };
   }, [project.id, session.id, sessionRevision, setTabRuntime, themeMode]);
+
+  useEffect(() => {
+    if (isFocused) {
+      terminalRef.current?.focus();
+    }
+  }, [isFocused, session.id]);
 
   const runtime = session.runtime;
   const showRestart = runtime?.status === "exited" || runtime?.status === "error";
 
   return (
-    <section className="terminal-pane">
+    <section
+      className={`terminal-pane ${isFocused ? "terminal-pane--focused" : ""}`}
+      onPointerDownCapture={onFocusSession}
+      onFocusCapture={onFocusSession}
+    >
       {tab.rootPathMissing ? (
         <div className="terminal-state">
           <strong>Default path unavailable</strong>
