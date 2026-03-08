@@ -1217,6 +1217,50 @@ html[data-theme="light"] .modal-backdrop {
   transform: translateX(-50%);
 }
 
+.busy-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1980;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+}
+
+html[data-theme="light"] .busy-overlay {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.busy-overlay__panel {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--text-strong);
+  box-shadow: var(--shadow);
+}
+
+.busy-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent-strong);
+  border-radius: 50% !important;
+  animation: busy-spin 0.8s linear infinite;
+}
+
+@keyframes busy-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 860px) {
   .app-shell,
   .app-shell--collapsed {

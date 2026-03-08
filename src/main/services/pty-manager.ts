@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -319,17 +320,16 @@ export class PtyManager {
     return this.activateSession(input, project, tab, session, shellProfile);
   }
 
-  closeTab(tabId: string): void {
-    for (const runtime of [...this.runtimes.values()]) {
-      if (runtime.tabId === tabId) {
-        void this.disposeRuntime(runtime.sessionId, true);
-      }
-    }
+  async closeTab(tabId: string): Promise<void> {
+    const matchingSessionIds = [...this.runtimes.values()]
+      .filter((runtime) => runtime.tabId === tabId)
+      .map((runtime) => runtime.sessionId);
+    await Promise.all(matchingSessionIds.map((sessionId) => this.disposeRuntime(sessionId, true)));
   }
 
-  shutdown(): void {
-    for (const sessionId of this.runtimes.keys()) {
-      void this.disposeRuntime(sessionId, true);
+  async shutdown(): Promise<void> {
+    for (const sessionId of [...this.runtimes.keys()]) {
+      await this.disposeRuntime(sessionId, true);
     }
   }
 
@@ -608,7 +608,7 @@ export class PtyManager {
     runtime.disposed = true;
     if (runtime.pty) {
       try {
-        runtime.pty.kill();
+        await this.terminateRuntimePty(runtime);
       } catch {
         // Best effort only.
       }
@@ -617,6 +617,35 @@ export class PtyManager {
     runtime.headless.dispose();
     cleanupBootstrapAssets(runtime.bootstrapCleanupPaths);
     this.runtimes.delete(sessionId);
+  }
+
+  private async terminateRuntimePty(runtime: RuntimeSession): Promise<void> {
+    const pty = runtime.pty;
+    if (!pty) {
+      return;
+    }
+
+    if (process.platform === "win32" && runtime.pid) {
+      await this.killWindowsProcessTree(runtime.pid);
+      return;
+    }
+
+    pty.kill();
+  }
+
+  private async killWindowsProcessTree(pid: number): Promise<void> {
+    await new Promise<void>((resolve) => {
+      execFile(
+        "taskkill.exe",
+        ["/PID", String(pid), "/T", "/F"],
+        {
+          windowsHide: true,
+        },
+        () => {
+          resolve();
+        },
+      );
+    });
   }
 
   private emitStatus(runtime: RuntimeSession): void {

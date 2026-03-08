@@ -1015,6 +1015,11 @@ export function App() {
 
       {error ? <FloatingError message={error} /> : null}
       {templateNotice ? <FloatingNotice message={templateNotice} /> : null}
+      {bootstrapped && loading ? (
+        <BusyOverlay
+          message={applyTemplateState ? "Applying template..." : "Updating workspace..."}
+        />
+      ) : null}
 
       {modalState ? (
         <ProjectModal
@@ -1122,6 +1127,7 @@ export function App() {
         <ApplyTemplateModal
           projectName={selectedProject.name}
           templateName={applyTemplateState.templateName}
+          loading={loading}
           onClose={() => setApplyTemplateState(null)}
           onApply={async (mode) => {
             await applyTemplate({
@@ -1482,6 +1488,21 @@ function FloatingNotice({ message }: FloatingErrorProps) {
   return <div className="floating-notice">{message}</div>;
 }
 
+interface BusyOverlayProps {
+  message: string;
+}
+
+function BusyOverlay({ message }: BusyOverlayProps) {
+  return (
+    <div className="busy-overlay" aria-live="polite" aria-busy="true">
+      <div className="busy-overlay__panel">
+        <span className="busy-spinner" aria-hidden="true" />
+        <span>{message}</span>
+      </div>
+    </div>
+  );
+}
+
 interface TemplatesModalProps {
   templates: WorkspaceTemplate[];
   canApply: boolean;
@@ -1700,6 +1721,7 @@ function RenameTemplateModal({
 interface ApplyTemplateModalProps {
   projectName: string;
   templateName: string;
+  loading: boolean;
   onClose(): void;
   onApply(mode: ApplyTemplateMode): Promise<void>;
 }
@@ -1707,6 +1729,7 @@ interface ApplyTemplateModalProps {
 function ApplyTemplateModal({
   projectName,
   templateName,
+  loading,
   onClose,
   onApply,
 }: ApplyTemplateModalProps) {
@@ -1717,22 +1740,25 @@ function ApplyTemplateModal({
         <p className="settings-note">
           Apply "{templateName}" to "{projectName}".
         </p>
+        {loading ? <p className="settings-note">Applying template and replacing shells...</p> : null}
         <div className="template-apply-actions">
           <button
             type="button"
             className="primary-button"
+            disabled={loading}
             onClick={() => void onApply("replace")}
           >
-            Replace tabs
+            {loading ? "Applying..." : "Replace tabs"}
           </button>
           <button
             type="button"
             className="ghost-button"
+            disabled={loading}
             onClick={() => void onApply("append")}
           >
             Append tabs
           </button>
-          <button type="button" className="ghost-button" onClick={onClose}>
+          <button type="button" className="ghost-button" disabled={loading} onClick={onClose}>
             Cancel
           </button>
         </div>

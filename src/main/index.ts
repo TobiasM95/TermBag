@@ -66,7 +66,7 @@ interface AppServiceContract {
   listHistory(projectId: string, limit?: number): unknown;
   recallHistory(sessionId: string, commandText: string): unknown;
   prepareForQuit(): Promise<void>;
-  shutdown(): void;
+  shutdown(): Promise<void>;
 }
 
 let mainWindow: BrowserWindow | null = null;

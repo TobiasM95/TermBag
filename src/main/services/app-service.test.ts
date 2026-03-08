@@ -308,11 +308,11 @@ class FakePtyManager {
     return null;
   }
 
-  closeTab(tabId: string): void {
+  async closeTab(tabId: string): Promise<void> {
     this.closedTabIds.push(tabId);
   }
 
-  shutdown(): void {}
+  async shutdown(): Promise<void> {}
 
   async persistSnapshots(): Promise<void> {}
 }
@@ -341,7 +341,7 @@ describe("AppService", () => {
     }
   });
 
-  it("still enforces the minimum-one-tab rule and closes all sessions when a tab is removed", () => {
+  it("still enforces the minimum-one-tab rule and closes all sessions when a tab is removed", async () => {
     const ptyManager = new FakePtyManager();
     const service = new AppService(
       new FakeDatabaseService() as never,
@@ -355,14 +355,14 @@ describe("AppService", () => {
     });
     const firstTabId = workspace.tabs[0]!.id;
 
-    expect(() => service.closeTab(firstTabId)).toThrow(
+    await expect(service.closeTab(firstTabId)).rejects.toThrow(
       "A project must keep at least one terminal tab in Phase 1.",
     );
 
     const withSecondTab = service.createTab({ projectId: workspace.project.id });
     expect(withSecondTab.tabs).toHaveLength(2);
 
-    const afterClose = service.closeTab(firstTabId);
+    const afterClose = await service.closeTab(firstTabId);
     expect(afterClose.tabs).toHaveLength(1);
     expect(ptyManager.closedTabIds).toContain(firstTabId);
   });
@@ -502,7 +502,7 @@ describe("AppService", () => {
     });
   });
 
-  it("applies templates in append and replace modes", () => {
+  it("applies templates in append and replace modes", async () => {
     const database = new FakeDatabaseService();
     const service = new AppService(
       database as never,
@@ -541,7 +541,7 @@ describe("AppService", () => {
       ],
     });
 
-    const appended = service.applyTemplate({
+    const appended = await service.applyTemplate({
       projectId: workspace.project.id,
       templateId: "template-1",
       mode: "append",
@@ -552,7 +552,7 @@ describe("AppService", () => {
     expect(appended.tabs[2]!.title).toBe("UI");
     expect(appended.tabs[0]!.id).toBe(originalTabId);
 
-    const replaced = service.applyTemplate({
+    const replaced = await service.applyTemplate({
       projectId: workspace.project.id,
       templateId: "template-1",
       mode: "replace",
@@ -563,7 +563,7 @@ describe("AppService", () => {
     expect(replaced.selectedTabId).toBe(replaced.tabs[0]!.id);
   });
 
-  it("falls back to the project default shell when a template shell is unavailable", () => {
+  it("falls back to the project default shell when a template shell is unavailable", async () => {
     const database = new FakeDatabaseService();
     const service = new AppService(
       database as never,
@@ -592,7 +592,7 @@ describe("AppService", () => {
       ],
     });
 
-    const applied = service.applyTemplate({
+    const applied = await service.applyTemplate({
       projectId: workspace.project.id,
       templateId: "template-shell-fallback",
       mode: "append",

@@ -124,11 +124,9 @@ export class AppService {
     return this.getProjectWorkspace(input.id);
   }
 
-  deleteProject(projectId: string): BootstrapData {
+  async deleteProject(projectId: string): Promise<BootstrapData> {
     const tabs = this.database.listTabsForProject(projectId);
-    for (const tab of tabs) {
-      this.ptyManager.closeTab(tab.id);
-    }
+    await Promise.all(tabs.map((tab) => this.ptyManager.closeTab(tab.id)));
     this.database.deleteProject(projectId);
     return this.bootstrap();
   }
@@ -179,7 +177,7 @@ export class AppService {
     return this.database.listTemplates();
   }
 
-  applyTemplate(input: ApplyTemplateInput): ProjectWorkspace {
+  async applyTemplate(input: ApplyTemplateInput): Promise<ProjectWorkspace> {
     const project = this.requireProject(input.projectId);
     const template = this.requireTemplate(input.templateId);
     if (template.tabs.length === 0) {
@@ -202,8 +200,8 @@ export class AppService {
     }
 
     if (input.mode === "replace") {
+      await Promise.all(previousTabs.map((tab) => this.ptyManager.closeTab(tab.id)));
       for (const tab of previousTabs) {
-        this.ptyManager.closeTab(tab.id);
         this.database.deleteTab(tab.id);
       }
     }
@@ -292,13 +290,13 @@ export class AppService {
     return this.getProjectWorkspace(tab.projectId);
   }
 
-  closeTab(tabId: string): ProjectWorkspace {
+  async closeTab(tabId: string): Promise<ProjectWorkspace> {
     const tab = this.requireTab(tabId);
     if (this.database.getTabCountForProject(tab.projectId) <= 1) {
       throw new Error("A project must keep at least one terminal tab in Phase 1.");
     }
 
-    this.ptyManager.closeTab(tabId);
+    await this.ptyManager.closeTab(tabId);
     this.database.deleteTab(tabId);
     return this.getProjectWorkspace(tab.projectId);
   }
@@ -422,8 +420,8 @@ export class AppService {
     return this.ptyManager.recallHistory(sessionId, commandText);
   }
 
-  shutdown(): void {
-    this.ptyManager.shutdown();
+  async shutdown(): Promise<void> {
+    await this.ptyManager.shutdown();
     this.database.close();
   }
 
