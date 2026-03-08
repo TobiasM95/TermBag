@@ -249,6 +249,25 @@ Current Windows packaging settings:
 - x64 targets
 - Windows icon: `build/icon.ico`
 
+## Automated GitHub Release
+
+`.github/workflows/windows-release.yml` publishes a Windows release automatically when:
+
+- you push the `release` branch
+- you run the workflow manually from the Actions tab on the `release` branch
+
+Before triggering it:
+
+- bump `package.json` to a new version; the workflow publishes `v<version>` and fails if that tag already exists
+- keep the workflow file on the default branch too if you want the manual `workflow_dispatch` button to appear in GitHub's UI
+- make sure GitHub Actions is allowed to write releases for the repository
+
+The workflow builds and uploads the root `release/` artifacts, including:
+
+- the portable `TermBag.exe`
+- the NSIS installer
+- generated `.blockmap` files and `latest.yml`
+
 ## Manual Smoke Test
 
 Useful quick checks after `pnpm dev` or `pnpm preview`:
