@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   detectLayoutPresetId,
   flattenLayoutLeafSessionIds,
@@ -340,6 +340,7 @@ export function App() {
   const [recallNotice, setRecallNotice] = useState<string | null>(null);
   const [templateNotice, setTemplateNotice] = useState<string | null>(null);
   const [terminalShortcutBypassArmed, setTerminalShortcutBypassArmed] = useState(false);
+  const sidebarRef = useRef<HTMLElement | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     if (typeof window === "undefined") {
       return "dark";
@@ -567,6 +568,35 @@ export function App() {
     setProjectHotkeyModifier(modifier);
   };
 
+  const focusSidebarTarget = (): void => {
+    const sidebar = sidebarRef.current;
+    if (!sidebar) {
+      return;
+    }
+
+    const focusSelectors = [
+      ".project-card--active",
+      ".project-card",
+      ".sidebar__settings-button",
+      ".sidebar__layouts-button:not(:disabled)",
+      ".sidebar__templates-button",
+      ".sidebar__controls .primary-button",
+      ".icon-button",
+    ];
+
+    for (const selector of focusSelectors) {
+      const candidate = sidebar.querySelector<HTMLElement>(selector);
+      if (!candidate || candidate.matches(":disabled")) {
+        continue;
+      }
+
+      candidate.focus();
+      return;
+    }
+
+    sidebar.focus();
+  };
+
   const focusSessionById = (tabId: string, sessionId: string) => {
     if (!activeTab || activeTab.id !== tabId || activeTab.focusedSessionId === sessionId) {
       return;
@@ -637,6 +667,18 @@ export function App() {
 
       if (event.key === "Escape") {
         setTabContextMenu(null);
+
+        if (
+          isTerminalKeyboardTarget(event.target) &&
+          !event.ctrlKey &&
+          !event.altKey &&
+          !event.metaKey &&
+          !event.shiftKey
+        ) {
+          consumeShortcutEvent(event);
+          focusSidebarTarget();
+          return;
+        }
       }
 
       if (event.defaultPrevented || isEditableTarget(event.target)) {
@@ -801,6 +843,7 @@ export function App() {
     applyTemplateState,
     sortedProjects,
     tabSessionHotkeyModifier,
+    focusSidebarTarget,
   ]);
 
   const handleProjectSubmit = async (
@@ -904,7 +947,11 @@ export function App() {
           </div>
         </div>
         <div className={`app-shell ${sidebarCollapsed ? "app-shell--collapsed" : ""}`}>
-        <aside className={`sidebar ${sidebarCollapsed ? "sidebar--collapsed" : ""}`}>
+        <aside
+          ref={sidebarRef}
+          tabIndex={-1}
+          className={`sidebar ${sidebarCollapsed ? "sidebar--collapsed" : ""}`}
+        >
           <div className="sidebar__top">
             <button
               type="button"
@@ -2066,7 +2113,8 @@ function SettingsModal({
             Use 1-9 for the first nine projects or tabs. Use 0 for item 10. Use Q,
             W, E, and R for the first four visible panes, and use the arrow keys to
             move focus between panes in the current layout. Press Ctrl+Space to send
-            the next chord to the active shell instead.
+            the next chord to the active shell instead. Press Escape while a shell is
+            focused to move focus back to the sidebar.
           </p>
         </div>
         <div className="settings-group">
