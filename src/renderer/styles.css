@@ -837,11 +837,13 @@ html[data-scrollbars="aggressive"] .terminal-host .xterm-viewport:hover::-webkit
 .modal-backdrop {
   position: fixed;
   inset: 0;
+  z-index: 2200;
   display: grid;
   place-items: center;
   padding: 24px;
   background: rgba(0, 0, 0, 0.72);
   backdrop-filter: blur(4px);
+  isolation: isolate;
 }
 
 html[data-theme="light"] .modal-backdrop {
