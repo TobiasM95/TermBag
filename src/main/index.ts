@@ -281,10 +281,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.activateSession, (_event, input: ActivateSessionInput) =>
     appService!.activateSession(input),
   );
-  ipcMain.handle(IPC_CHANNELS.resizeSession, (_event, input: ResizeSessionInput) => {
+  ipcMain.on(IPC_CHANNELS.resizeSession, (_event, input: ResizeSessionInput) => {
     appService!.resizeSession(input.sessionId, input.cols, input.rows);
   });
-  ipcMain.handle(IPC_CHANNELS.writeToSession, (_event, sessionId: string, data: string) => {
+  ipcMain.on(IPC_CHANNELS.writeToSession, (_event, sessionId: string, data: string) => {
     appService!.writeToSession(sessionId, data);
   });
   ipcMain.handle(IPC_CHANNELS.restartSession, (_event, input: ActivateSessionInput) =>

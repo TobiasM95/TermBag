@@ -339,8 +339,8 @@ export interface TermBagApi {
   applyLayoutPreset(input: ApplyLayoutPresetInput): Promise<ProjectWorkspace>;
   setFocusedSession(input: SetFocusedSessionInput): Promise<ProjectWorkspace>;
   activateSession(input: ActivateSessionInput): Promise<HydratedSession>;
-  resizeSession(input: ResizeSessionInput): Promise<void>;
-  writeToSession(sessionId: string, data: string): Promise<void>;
+  resizeSession(input: ResizeSessionInput): void;
+  writeToSession(sessionId: string, data: string): void;
   restartSession(input: ActivateSessionInput): Promise<HydratedSession>;
   listHistory(query: HistoryQuery): Promise<HistoryEntry[]>;
   recallHistory(input: RecallHistoryInput): Promise<RecallHistoryResult>;

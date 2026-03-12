@@ -15,6 +15,7 @@ afterEach(() => {
     templates: [],
     selectedProjectId: null,
     workspaces: {},
+    sessionRuntimes: {},
     historyEntries: [],
     historyLoading: false,
     historyError: null,
@@ -22,7 +23,7 @@ afterEach(() => {
 });
 
 describe("useAppStore", () => {
-  it("applies runtime events to the matching nested session", () => {
+  it("stores runtime events separately from the workspace tree", () => {
     useAppStore.setState({
       bootstrapped: true,
       loading: false,
@@ -119,12 +120,14 @@ describe("useAppStore", () => {
     });
 
     const updatedWorkspace = useAppStore.getState().workspaces["project-1"];
+    const updatedRuntime = useAppStore.getState().sessionRuntimes["session-2"];
     const updatedSession = updatedWorkspace?.tabs[0]?.sessions.find(
       (session) => session.id === "session-2",
     );
 
-    expect(updatedSession?.runtime?.status).toBe("running");
-    expect(updatedSession?.runtime?.pid).toBe(123);
+    expect(updatedRuntime?.status).toBe("running");
+    expect(updatedRuntime?.pid).toBe(123);
     expect(updatedWorkspace?.tabs[0]?.sessions[0]?.runtime).toBeNull();
+    expect(updatedSession?.runtime).toBeNull();
   });
 });

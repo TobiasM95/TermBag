@@ -14,7 +14,9 @@ const OSC_PROMPT_REGEX = /\u001b]633;TermBagPrompt=([^\u0007]*)\u0007/g;
 const OSC_COMMAND_REGEX = /\u001b]633;TermBagCommand=([^\u0007]*)\u0007/g;
 const ALT_SCREEN_ENTER = /\u001b\[\?(?:1049|1047|47)h/g;
 const ALT_SCREEN_EXIT = /\u001b\[\?(?:1049|1047|47)l/g;
-const INITIAL_TERMINAL_NOISE = /\u001b\[\?9001h|\u001b\[\?1004h|\u001b\[\?25[hl]|\u001b\[2J|\u001b\[H|\u001b\[K|\u001b\[(?:0|)m/g;
+const INITIAL_TERMINAL_MARKERS = /\u001b\[\?9001h|\u001b\[\?1004h/g;
+const INITIAL_TERMINAL_CLEAR =
+  /\u001b\[\?25[hl](?=\u001b\[2J)|\u001b\[2J(?:\u001b\[(?:0|)m)?(?:\u001b\[H)?/g;
 
 export function getPowerShellEncodingBootstrapLines(): string[] {
   return [
@@ -88,9 +90,6 @@ export function parseIntegrationChunk(chunk: string): ParsedIntegrationChunk {
   const enteredAlternateScreen = ALT_SCREEN_ENTER.test(chunk);
   const exitedAlternateScreen = ALT_SCREEN_EXIT.test(chunk);
 
-  sanitized = sanitized.replace(ALT_SCREEN_ENTER, "");
-  sanitized = sanitized.replace(ALT_SCREEN_EXIT, "");
-
   return {
     sanitized,
     cwdSignals,
@@ -102,7 +101,9 @@ export function parseIntegrationChunk(chunk: string): ParsedIntegrationChunk {
 }
 
 export function stripInitialTerminalNoise(chunk: string): string {
-  return chunk.replace(INITIAL_TERMINAL_NOISE, "");
+  return chunk
+    .replace(INITIAL_TERMINAL_MARKERS, "")
+    .replace(INITIAL_TERMINAL_CLEAR, "");
 }
 
 export function inferCmdPromptCwdFromOutput(

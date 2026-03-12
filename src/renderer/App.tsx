@@ -6,6 +6,7 @@ import {
 } from "../shared/layout";
 import { TerminalPane } from "./components/TerminalPane";
 import { useAppStore } from "./store/app-store";
+import { createTerminalPerformanceMeter } from "../shared/terminal-performance";
 import type {
   ApplyTemplateMode,
   CreateProjectInput,
@@ -59,6 +60,19 @@ const SCROLLBAR_MODE_STORAGE_KEY = "termbag-scrollbar-mode";
 const PROJECT_HOTKEY_MODIFIER_STORAGE_KEY = "termbag-project-hotkey-modifier";
 const AVAILABLE_HOTKEY_MODIFIERS: HotkeyModifier[] = ["control", "alt"];
 const TERMINAL_SHORTCUT_BYPASS_TIMEOUT_MS = 2400;
+
+function isRendererTerminalPerfEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+
+  return window.localStorage.getItem("termbag-debug-perf") === "1";
+}
+
+const appRenderPerformance = createTerminalPerformanceMeter(
+  "renderer:app:render",
+  isRendererTerminalPerfEnabled(),
+);
 
 type LayoutPresetDefinition = {
   id: LayoutPresetId;
@@ -283,41 +297,43 @@ export function App() {
     typeof window !== "undefined" && typeof window.termbag !== "undefined";
   const isMacPlatform = useMemo(() => detectMacPlatform(), []);
 
-  const {
-    bootstrapped,
-    loading,
-    error,
-    projects,
-    shellProfiles,
-    templates,
-    selectedProjectId,
-    workspaces,
-    historyEntries,
-    historyLoading,
-    historyError,
-    bootstrap,
-    loadProjectWorkspace,
-    selectProject,
-    setSelectedTab,
-    createProject,
-    updateProject,
-    deleteProject,
-    saveProjectAsTemplate,
-    renameTemplate,
-    deleteTemplate,
-    applyTemplate,
-    importTemplates,
-    exportTemplate,
-    exportAllTemplates,
-    createTab,
-    renameTab,
-    closeTab,
-    applyLayoutPreset,
-    setFocusedSession,
-    loadHistory,
-    applyTerminalEvent,
-    clearError,
-  } = useAppStore();
+  const bootstrapped = useAppStore((state) => state.bootstrapped);
+  const loading = useAppStore((state) => state.loading);
+  const error = useAppStore((state) => state.error);
+  const projects = useAppStore((state) => state.projects);
+  const shellProfiles = useAppStore((state) => state.shellProfiles);
+  const templates = useAppStore((state) => state.templates);
+  const selectedProjectId = useAppStore((state) => state.selectedProjectId);
+  const workspaces = useAppStore((state) => state.workspaces);
+  const historyEntries = useAppStore((state) => state.historyEntries);
+  const historyLoading = useAppStore((state) => state.historyLoading);
+  const historyError = useAppStore((state) => state.historyError);
+  const bootstrap = useAppStore((state) => state.bootstrap);
+  const loadProjectWorkspace = useAppStore((state) => state.loadProjectWorkspace);
+  const selectProject = useAppStore((state) => state.selectProject);
+  const setSelectedTab = useAppStore((state) => state.setSelectedTab);
+  const createProject = useAppStore((state) => state.createProject);
+  const updateProject = useAppStore((state) => state.updateProject);
+  const deleteProject = useAppStore((state) => state.deleteProject);
+  const saveProjectAsTemplate = useAppStore((state) => state.saveProjectAsTemplate);
+  const renameTemplate = useAppStore((state) => state.renameTemplate);
+  const deleteTemplate = useAppStore((state) => state.deleteTemplate);
+  const applyTemplate = useAppStore((state) => state.applyTemplate);
+  const importTemplates = useAppStore((state) => state.importTemplates);
+  const exportTemplate = useAppStore((state) => state.exportTemplate);
+  const exportAllTemplates = useAppStore((state) => state.exportAllTemplates);
+  const createTab = useAppStore((state) => state.createTab);
+  const renameTab = useAppStore((state) => state.renameTab);
+  const closeTab = useAppStore((state) => state.closeTab);
+  const applyLayoutPreset = useAppStore((state) => state.applyLayoutPreset);
+  const setFocusedSession = useAppStore((state) => state.setFocusedSession);
+  const loadHistory = useAppStore((state) => state.loadHistory);
+  const applyTerminalEvent = useAppStore((state) => state.applyTerminalEvent);
+  const clearError = useAppStore((state) => state.clearError);
+
+  useEffect(() => {
+    appRenderPerformance.record();
+  });
 
   const [modalState, setModalState] = useState<ModalState>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -426,6 +442,9 @@ export function App() {
     }
 
     return window.termbag.onTerminalEvent((event) => {
+      if (event.type !== "status") {
+        return;
+      }
       applyTerminalEvent(event);
     });
   }, [applyTerminalEvent, hasPreloadApi]);

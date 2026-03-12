@@ -11,6 +11,7 @@ import {
   SNAPSHOT_FORMAT,
   SNAPSHOT_SCROLLBACK,
 } from "../../shared/snapshot.js";
+import { createTerminalPerformanceMeter } from "../../shared/terminal-performance.js";
 import { isSameTerminalSize } from "../../shared/terminal-size.js";
 import {
   applyInputToTrackingState,
@@ -63,12 +64,16 @@ interface RuntimeSession {
   suppressInitialRenderNoise: boolean;
   currentCwd: string | null;
   flushTimer: NodeJS.Timeout | null;
+  outputFlushTimer: NodeJS.Timeout | null;
   supportsIntegration: boolean;
   operationQueue: Promise<void>;
   outputSequence: number;
   lastCommittedSequence: number;
+  pendingOutputData: string;
+  pendingOutputSequence: number;
   snapshotDirty: boolean;
   lastSerializedByteCount: number;
+  lastEmittedStatusDigest: string | null;
   bootstrapCleanupPaths: string[];
   disposed: boolean;
 }
@@ -77,7 +82,23 @@ type TerminalWriter = {
   write(data: string, callback?: () => void): void;
 };
 
-const SNAPSHOT_DEBOUNCE_MS = 500;
+const OUTPUT_BATCH_INTERVAL_MS = 12;
+const OUTPUT_BATCH_MAX_BYTES = 16 * 1024;
+const SNAPSHOT_DEBOUNCE_MS = 4000;
+const terminalPerfEnabled =
+  process.env.NODE_ENV !== "production" && process.env.TERMBAG_DEBUG_PERF === "1";
+const ptyReceivePerformance = createTerminalPerformanceMeter(
+  "main:pty-receive",
+  terminalPerfEnabled,
+);
+const outputFlushPerformance = createTerminalPerformanceMeter(
+  "main:output-flush",
+  terminalPerfEnabled,
+);
+const snapshotFlushPerformance = createTerminalPerformanceMeter(
+  "main:snapshot-flush",
+  terminalPerfEnabled,
+);
 
 function writeTerminalData(terminal: TerminalWriter, data: string): Promise<void> {
   if (!data) {
@@ -183,6 +204,7 @@ export class PtyManager {
       }
 
       pty.onData((chunk) => {
+        ptyReceivePerformance.record({ bytes: countSnapshotBytes(chunk) });
         void this.handleData(tab, session, shellProfile, runtime, chunk);
       });
       pty.onExit(({ exitCode }) => {
@@ -190,27 +212,17 @@ export class PtyManager {
           return;
         }
 
-        runtime.status = "exited";
-        runtime.exitCode = exitCode;
-        runtime.pid = null;
-        runtime.pty = null;
-        runtime.promptTrackingValid = false;
-        runtime.currentInputBuffer = "";
-        runtime.inputCursorIndex = 0;
-        runtime.pendingSubmittedCommand = null;
-        runtime.snapshotDirty = true;
-        void this.flushSnapshot(runtime);
-        this.emitStatus(runtime);
+        void this.handleProcessExit(runtime, exitCode);
       });
 
-      this.emitStatus(runtime);
+      this.emitStatusIfChanged(runtime);
     } catch (error) {
       cleanupBootstrapAssets(runtime.bootstrapCleanupPaths);
       runtime.bootstrapCleanupPaths = [];
       runtime.status = "error";
       runtime.errorMessage =
         error instanceof Error ? error.message : "Unknown PTY spawn error";
-      this.emitStatus(runtime);
+      this.emitStatusIfChanged(runtime);
     }
 
     const replay = await this.captureReplayState(runtime);
@@ -271,7 +283,6 @@ export class PtyManager {
       }
     }
 
-    this.emitStatus(runtime);
   }
 
   recallHistory(sessionId: string, commandText: string): RecallHistoryResult {
@@ -309,7 +320,7 @@ export class PtyManager {
     runtime.pty.write(commandText);
     runtime.currentInputBuffer = commandText;
     runtime.inputCursorIndex = commandText.length;
-    this.emitStatus(runtime);
+    this.emitStatusIfChanged(runtime);
 
     return {
       applied: true,
@@ -351,6 +362,10 @@ export class PtyManager {
         if (runtime.flushTimer) {
           clearTimeout(runtime.flushTimer);
           runtime.flushTimer = null;
+        }
+        if (runtime.outputFlushTimer) {
+          clearTimeout(runtime.outputFlushTimer);
+          runtime.outputFlushTimer = null;
         }
         await this.flushSnapshot(runtime);
       }),
@@ -395,16 +410,115 @@ export class PtyManager {
       suppressInitialRenderNoise: true,
       currentCwd: session.lastKnownCwd,
       flushTimer: null,
+      outputFlushTimer: null,
       supportsIntegration: shellProfile.supportsIntegration,
       operationQueue: Promise.resolve(),
       outputSequence: 0,
       lastCommittedSequence: 0,
+      pendingOutputData: "",
+      pendingOutputSequence: 0,
       snapshotDirty: false,
       lastSerializedByteCount: 0,
+      lastEmittedStatusDigest: null,
       bootstrapCleanupPaths: [],
       disposed: false,
       ...overrides,
     };
+  }
+
+  private scheduleOutputFlush(runtime: RuntimeSession): void {
+    if (runtime.outputFlushTimer) {
+      return;
+    }
+
+    runtime.outputFlushTimer = setTimeout(() => {
+      runtime.outputFlushTimer = null;
+      void this.flushPendingOutput(runtime);
+    }, OUTPUT_BATCH_INTERVAL_MS);
+  }
+
+  private queueOutputData(
+    runtime: RuntimeSession,
+    data: string,
+    sequence: number,
+  ): void {
+    runtime.pendingOutputData += data;
+    runtime.pendingOutputSequence = sequence;
+
+    if (countSnapshotBytes(runtime.pendingOutputData) >= OUTPUT_BATCH_MAX_BYTES) {
+      void this.flushPendingOutput(runtime);
+      return;
+    }
+
+    this.scheduleOutputFlush(runtime);
+  }
+
+  private async flushPendingOutput(
+    runtime: RuntimeSession,
+    waitForCommit = false,
+  ): Promise<void> {
+    if (runtime.outputFlushTimer) {
+      clearTimeout(runtime.outputFlushTimer);
+      runtime.outputFlushTimer = null;
+    }
+
+    const data = runtime.pendingOutputData;
+    const sequence = runtime.pendingOutputSequence;
+    if (!data) {
+      if (waitForCommit) {
+        await runtime.operationQueue;
+      }
+      return;
+    }
+
+    runtime.pendingOutputData = "";
+    outputFlushPerformance.record({
+      bytes: countSnapshotBytes(data),
+    });
+    this.onTerminalEvent({
+      type: "output",
+      sessionId: runtime.sessionId,
+      tabId: runtime.tabId,
+      data,
+      sequence,
+    });
+
+    const commitPromise = this.enqueueRuntimeTask(runtime, async () => {
+      if (runtime.disposed) {
+        return;
+      }
+
+      await writeTerminalData(runtime.headless, data);
+      runtime.lastCommittedSequence = sequence;
+      runtime.snapshotDirty = true;
+      this.scheduleSnapshotFlush(runtime);
+    });
+
+    if (waitForCommit) {
+      await commitPromise;
+    }
+  }
+
+  private async handleProcessExit(
+    runtime: RuntimeSession,
+    exitCode: number,
+  ): Promise<void> {
+    await this.flushPendingOutput(runtime, true);
+    if (!this.runtimes.has(runtime.sessionId)) {
+      return;
+    }
+
+    runtime.status = "exited";
+    runtime.exitCode = exitCode;
+    runtime.pid = null;
+    runtime.pty = null;
+    runtime.promptTrackingValid = false;
+    runtime.currentInputBuffer = "";
+    runtime.inputCursorIndex = 0;
+    runtime.pendingSubmittedCommand = null;
+    runtime.snapshotDirty = true;
+    await this.flushSnapshot(runtime);
+    this.emitStatusIfChanged(runtime);
   }
 
   private async handleData(
@@ -480,27 +594,10 @@ export class PtyManager {
     if (displayData) {
       const sequence = runtime.outputSequence + 1;
       runtime.outputSequence = sequence;
-      void this.enqueueRuntimeTask(runtime, async () => {
-        if (runtime.disposed) {
-          return;
-        }
-
-        await writeTerminalData(runtime.headless, displayData);
-        runtime.lastCommittedSequence = sequence;
-        runtime.snapshotDirty = true;
-        this.scheduleSnapshotFlush(runtime);
-      });
-
-      this.onTerminalEvent({
-        type: "output",
-        sessionId: runtime.sessionId,
-        tabId: runtime.tabId,
-        data: displayData,
-        sequence,
-      });
+      this.queueOutputData(runtime, displayData, sequence);
     }
 
-    this.emitStatus(runtime);
+    this.emitStatusIfChanged(runtime);
   }
 
   private persistCwdAndTitle(
@@ -567,9 +664,7 @@ export class PtyManager {
   }
 
   private async flushSnapshot(runtime: RuntimeSession): Promise<void> {
-    if (!runtime.snapshotDirty) {
-      return;
-    }
+    await this.flushPendingOutput(runtime, true);
 
     await this.enqueueRuntimeTask(runtime, () => {
       if (!runtime.snapshotDirty || runtime.alternateScreenActive || runtime.disposed) {
@@ -585,6 +680,7 @@ export class PtyManager {
       return;
     }
 
+    const startedAt = performance.now();
     const transcriptText = buildTerminalTranscript(runtime.headless.buffer.normal);
     runtime.lastSerializedByteCount = countSnapshotBytes(transcriptText);
     runtime.snapshotDirty = false;
@@ -594,12 +690,17 @@ export class PtyManager {
       transcriptText,
       byteCount: runtime.lastSerializedByteCount,
     });
+    snapshotFlushPerformance.record({
+      bytes: runtime.lastSerializedByteCount,
+      durationMs: performance.now() - startedAt,
+    });
   }
 
   private async captureReplayState(runtime: RuntimeSession): Promise<{
     serializedState: string;
     replayRevision: number;
   }> {
+    await this.flushPendingOutput(runtime, true);
     return this.enqueueRuntimeTask(runtime, () => ({
       serializedState: serializeTerminal(runtime),
       replayRevision: runtime.lastCommittedSequence,
@@ -648,6 +749,12 @@ export class PtyManager {
       clearTimeout(runtime.flushTimer);
       runtime.flushTimer = null;
     }
+    if (runtime.outputFlushTimer) {
+      clearTimeout(runtime.outputFlushTimer);
+      runtime.outputFlushTimer = null;
+    }
+
+    await this.flushPendingOutput(runtime, true);
 
     if (persistSnapshot) {
       await this.flushSnapshot(runtime);
@@ -696,12 +803,19 @@ export class PtyManager {
     });
   }
 
-  private emitStatus(runtime: RuntimeSession): void {
+  private emitStatusIfChanged(runtime: RuntimeSession): void {
+    const summary = this.toRuntimeSummary(runtime);
+    const digest = JSON.stringify(summary);
+    if (digest === runtime.lastEmittedStatusDigest) {
+      return;
+    }
+
+    runtime.lastEmittedStatusDigest = digest;
     this.onTerminalEvent({
       type: "status",
       sessionId: runtime.sessionId,
       tabId: runtime.tabId,
-      runtime: this.toRuntimeSummary(runtime),
+      runtime: summary,
     });
   }
 

@@ -141,12 +141,14 @@ describe("PowerShell integration parsing", () => {
     expect(parsed.sanitized).toBe("\u001b[31mred\u001b[0m");
   });
 
-  it("recognizes alternate-screen enter and exit variants used by TUIs", () => {
+  it("preserves alternate-screen sequences while still tracking TUI state", () => {
     const entered = parseIntegrationChunk("\u001b[?1047h\u001b[?25l");
     const exited = parseIntegrationChunk("\u001b[?47l");
 
     expect(entered.enteredAlternateScreen).toBe(true);
     expect(exited.exitedAlternateScreen).toBe(true);
+    expect(entered.sanitized).toBe("\u001b[?1047h\u001b[?25l");
+    expect(exited.sanitized).toBe("\u001b[?47l");
   });
 
   it("strips cmd startup noise that would wipe hydrated replay output", () => {
@@ -155,6 +157,11 @@ describe("PowerShell integration parsing", () => {
         "\u001b[?9001h\u001b[?1004h\u001b[?25l\u001b[2J\u001b[m\u001b[HC:\\Users\\tobim\\Documents>",
       ),
     ).toBe("C:\\Users\\tobim\\Documents>");
+  });
+
+  it("preserves standalone cursor visibility controls outside startup cleanup", () => {
+    expect(stripInitialTerminalNoise("\u001b[?25lready")).toBe("\u001b[?25lready");
+    expect(stripInitialTerminalNoise("\u001b[?25hready")).toBe("\u001b[?25hready");
   });
 });
 

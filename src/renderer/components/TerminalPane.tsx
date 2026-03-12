@@ -3,6 +3,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import type { Project, WorkspaceSession, WorkspaceTab } from "../../shared/types";
 import { isSameTerminalSize, type TerminalSize } from "../../shared/terminal-size";
+import { createTerminalPerformanceMeter } from "../../shared/terminal-performance";
 import { useAppStore } from "../store/app-store";
 
 interface TerminalPaneProps {
@@ -19,6 +20,28 @@ type PendingOutput = {
   sequence: number;
 };
 
+function isRendererTerminalPerfEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+
+  return window.localStorage.getItem("termbag-debug-perf") === "1";
+}
+
+const terminalPerfEnabled = isRendererTerminalPerfEnabled();
+const terminalPaneRenderPerformance = createTerminalPerformanceMeter(
+  "renderer:terminal-pane:render",
+  terminalPerfEnabled,
+);
+const terminalOutputFlushPerformance = createTerminalPerformanceMeter(
+  "renderer:output-queue-flush",
+  terminalPerfEnabled,
+);
+const terminalWriteCompletionPerformance = createTerminalPerformanceMeter(
+  "renderer:xterm-write-complete",
+  terminalPerfEnabled,
+);
+
 function writeTerminalData(terminal: Terminal, data: string): Promise<void> {
   if (!data) {
     return Promise.resolve();
@@ -33,6 +56,10 @@ function nextFrame(): Promise<void> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => resolve());
   });
+}
+
+function countTerminalBytes(data: string): number {
+  return new TextEncoder().encode(data).byteLength;
 }
 
 function isCopyShortcut(event: KeyboardEvent): boolean {
@@ -56,11 +83,21 @@ export function TerminalPane({
   const restartRequestedRef = useRef(false);
   const hydrationCompleteRef = useRef(false);
   const pendingOutputRef = useRef<PendingOutput[]>([]);
+  const queuedLiveOutputRef = useRef("");
+  const liveFlushScheduledRef = useRef(false);
+  const liveWriteInFlightRef = useRef(false);
   const latestAppliedSequenceRef = useRef(0);
   const lastSentSizeRef = useRef<TerminalSize | null>(null);
-  const setTabRuntime = useAppStore((state) => state.setTabRuntime);
+  const liveFlushFrameRef = useRef<number | null>(null);
+  const resizeFrameRef = useRef<number | null>(null);
+  const setSessionRuntime = useAppStore((state) => state.setSessionRuntime);
+  const runtime = useAppStore((state) => state.sessionRuntimes[session.id] ?? session.runtime);
   const [sessionRevision, setSessionRevision] = useState(0);
   const [localError, setLocalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    terminalPaneRenderPerformance.record();
+  });
 
   useEffect(() => {
     if (!hostRef.current) {
@@ -177,16 +214,77 @@ export function TerminalPane({
       };
     };
 
+    const flushQueuedOutput = async () => {
+      if (liveWriteInFlightRef.current) {
+        return;
+      }
+
+      const data = queuedLiveOutputRef.current;
+      if (!data) {
+        return;
+      }
+
+      const queuedBytes = countTerminalBytes(data);
+      queuedLiveOutputRef.current = "";
+      liveWriteInFlightRef.current = true;
+      terminalOutputFlushPerformance.record({
+        bytes: queuedBytes,
+        queueDepth: countTerminalBytes(queuedLiveOutputRef.current),
+      });
+
+      const startedAt = performance.now();
+      await writeTerminalData(terminal, data);
+      terminalWriteCompletionPerformance.record({
+        bytes: queuedBytes,
+        durationMs: performance.now() - startedAt,
+        queueDepth: countTerminalBytes(queuedLiveOutputRef.current),
+      });
+      liveWriteInFlightRef.current = false;
+
+      if (queuedLiveOutputRef.current) {
+        scheduleOutputFlush();
+      }
+    };
+
+    const scheduleOutputFlush = () => {
+      if (liveFlushScheduledRef.current || !hydrationCompleteRef.current) {
+        return;
+      }
+
+      liveFlushScheduledRef.current = true;
+      liveFlushFrameRef.current = requestAnimationFrame(() => {
+        liveFlushScheduledRef.current = false;
+        liveFlushFrameRef.current = null;
+        void flushQueuedOutput();
+      });
+    };
+
     const sendResizeIfNeeded = (size: TerminalSize) => {
       if (lastSentSizeRef.current && isSameTerminalSize(lastSentSizeRef.current, size)) {
         return;
       }
 
       lastSentSizeRef.current = size;
-      void window.termbag.resizeSession({
+      window.termbag.resizeSession({
         sessionId: session.id,
         cols: size.cols,
         rows: size.rows,
+      });
+    };
+
+    const scheduleResize = () => {
+      if (resizeFrameRef.current !== null) {
+        return;
+      }
+
+      resizeFrameRef.current = requestAnimationFrame(() => {
+        resizeFrameRef.current = null;
+        if (!hydrationCompleteRef.current) {
+          return;
+        }
+
+        const fittedSize = fitTerminal();
+        sendResizeIfNeeded(fittedSize);
       });
     };
 
@@ -194,6 +292,9 @@ export function TerminalPane({
 
     hydrationCompleteRef.current = false;
     pendingOutputRef.current = [];
+    queuedLiveOutputRef.current = "";
+    liveFlushScheduledRef.current = false;
+    liveWriteInFlightRef.current = false;
     latestAppliedSequenceRef.current = 0;
     lastSentSizeRef.current = null;
 
@@ -212,14 +313,13 @@ export function TerminalPane({
         }
 
         latestAppliedSequenceRef.current = event.sequence;
-        terminal.write(event.data);
+        queuedLiveOutputRef.current += event.data;
+        scheduleOutputFlush();
       }
     });
 
     const disposeInput = terminal.onData((data) => {
-      void window.termbag.writeToSession(session.id, data).catch((error: unknown) => {
-        setLocalError(error instanceof Error ? error.message : "Failed to send input.");
-      });
+      window.termbag.writeToSession(session.id, data);
     });
 
     const shouldRestart = restartRequestedRef.current;
@@ -261,19 +361,17 @@ export function TerminalPane({
 
       hydrationCompleteRef.current = true;
       lastSentSizeRef.current = initialSize;
-      setTabRuntime(project.id, response.runtime);
+      setSessionRuntime(response.runtime);
       const resizeObserver = new ResizeObserver(() => {
         if (!hydrationCompleteRef.current) {
           return;
         }
 
-        const fittedSize = fitTerminal();
-        sendResizeIfNeeded(fittedSize);
+        scheduleResize();
       });
       resizeObserver.observe(hostRef.current!);
       await nextFrame();
-      const settledSize = fitTerminal();
-      sendResizeIfNeeded(settledSize);
+      scheduleResize();
       terminal.scrollToBottom();
       if (isFocused) {
         terminal.focus();
@@ -297,10 +395,18 @@ export function TerminalPane({
       disposeResizeObserver?.();
       disposeOutput();
       disposeInput.dispose();
+      if (liveFlushFrameRef.current !== null) {
+        cancelAnimationFrame(liveFlushFrameRef.current);
+        liveFlushFrameRef.current = null;
+      }
+      if (resizeFrameRef.current !== null) {
+        cancelAnimationFrame(resizeFrameRef.current);
+        resizeFrameRef.current = null;
+      }
       terminalRef.current = null;
       terminal.dispose();
     };
-  }, [project.id, session.id, sessionRevision, setTabRuntime, themeMode]);
+  }, [session.id, sessionRevision, setSessionRuntime, themeMode]);
 
   useEffect(() => {
     if (isFocused) {
@@ -308,7 +414,6 @@ export function TerminalPane({
     }
   }, [isFocused, session.id]);
 
-  const runtime = session.runtime;
   const showRestart = runtime?.status === "exited" || runtime?.status === "error";
 
   return (

@@ -280,6 +280,34 @@ Useful quick checks after `pnpm dev` or `pnpm preview`:
 6. Press `Ctrl+Shift+R` and confirm command recall works.
 7. Switch theme, collapse the sidebar, resize/maximize the window, restart, and confirm UI state persists.
 
+## Terminal Perf Checks
+
+For dev-only terminal perf counters:
+
+```powershell
+$env:TERMBAG_DEBUG_PERF = "1"
+pnpm dev
+```
+
+Then, in the renderer devtools console, enable renderer-side counters once:
+
+```js
+localStorage.setItem("termbag-debug-perf", "1");
+location.reload();
+```
+
+Useful repeatable terminal checks:
+
+```powershell
+1..5000 | ForEach-Object { "spam $_" }
+```
+
+```cmd
+for /L %i in (1,1,5000) do @echo spam %i
+```
+
+For TUI validation, use a real alternate-screen app such as `vim`, `less README.md`, or `fzf` if it is installed locally.
+
 ## Known Constraints
 
 - Phase 1 is Windows-first.

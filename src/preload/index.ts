@@ -26,6 +26,25 @@ import type {
   WorkspaceTemplate,
 } from "../shared/types.js";
 
+const terminalEventListeners = new Set<(event: TerminalEvent) => void>();
+let terminalEventBridgeRegistered = false;
+
+function ensureTerminalEventBridge(): void {
+  if (terminalEventBridgeRegistered) {
+    return;
+  }
+
+  ipcRenderer.on(
+    IPC_CHANNELS.terminalEvent,
+    (_event: Electron.IpcRendererEvent, payload: TerminalEvent) => {
+      for (const listener of terminalEventListeners) {
+        listener(payload);
+      }
+    },
+  );
+  terminalEventBridgeRegistered = true;
+}
+
 const api: TermBagApi = {
   bootstrap: () => ipcRenderer.invoke(IPC_CHANNELS.bootstrap) as Promise<BootstrapData>,
   pickDirectory: (initialPath?: string) =>
@@ -74,10 +93,12 @@ const api: TermBagApi = {
     ipcRenderer.invoke(IPC_CHANNELS.setFocusedSession, input) as Promise<ProjectWorkspace>,
   activateSession: (input: ActivateSessionInput) =>
     ipcRenderer.invoke(IPC_CHANNELS.activateSession, input) as Promise<HydratedSession>,
-  resizeSession: (input: ResizeSessionInput) =>
-    ipcRenderer.invoke(IPC_CHANNELS.resizeSession, input) as Promise<void>,
-  writeToSession: (sessionId: string, data: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.writeToSession, sessionId, data) as Promise<void>,
+  resizeSession: (input: ResizeSessionInput) => {
+    ipcRenderer.send(IPC_CHANNELS.resizeSession, input);
+  },
+  writeToSession: (sessionId: string, data: string) => {
+    ipcRenderer.send(IPC_CHANNELS.writeToSession, sessionId, data);
+  },
   restartSession: (input: ActivateSessionInput) =>
     ipcRenderer.invoke(IPC_CHANNELS.restartSession, input) as Promise<HydratedSession>,
   listHistory: (query: HistoryQuery) =>
@@ -85,11 +106,10 @@ const api: TermBagApi = {
   recallHistory: (input: RecallHistoryInput) =>
     ipcRenderer.invoke(IPC_CHANNELS.recallHistory, input) as Promise<RecallHistoryResult>,
   onTerminalEvent: (listener: (event: TerminalEvent) => void) => {
-    const wrapped = (_event: Electron.IpcRendererEvent, payload: TerminalEvent) =>
-      listener(payload);
-    ipcRenderer.on(IPC_CHANNELS.terminalEvent, wrapped);
+    ensureTerminalEventBridge();
+    terminalEventListeners.add(listener);
     return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.terminalEvent, wrapped);
+      terminalEventListeners.delete(listener);
     };
   },
 };

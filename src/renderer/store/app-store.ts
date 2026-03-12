@@ -30,6 +30,7 @@ interface AppState {
   templates: WorkspaceTemplate[];
   selectedProjectId: string | null;
   workspaces: Record<string, ProjectWorkspace>;
+  sessionRuntimes: Record<string, SessionRuntimeSummary>;
   historyEntries: HistoryEntry[];
   historyLoading: boolean;
   historyError: string | null;
@@ -55,7 +56,7 @@ interface AppState {
   setFocusedSession(input: SetFocusedSessionInput): Promise<void>;
   loadHistory(sessionId: string): Promise<void>;
   applyTerminalEvent(event: TerminalEvent): void;
-  setTabRuntime(projectId: string, runtime: SessionRuntimeSummary): void;
+  setSessionRuntime(runtime: SessionRuntimeSummary): void;
 }
 
 const LAST_ACTIVE_TABS_STORAGE_KEY = "termbag-last-active-tabs";
@@ -82,33 +83,35 @@ function upsertProject(projects: Project[], project: Project): Project[] {
   return nextProjects;
 }
 
-function applyRuntimeToWorkspaces(
-  workspaces: Record<string, ProjectWorkspace>,
-  runtime: SessionRuntimeSummary,
-): Record<string, ProjectWorkspace> {
-  const workspace = workspaces[runtime.projectId];
-  if (!workspace) {
-    return workspaces;
+function collectWorkspaceSessionIds(workspace: ProjectWorkspace): string[] {
+  return workspace.tabs.flatMap((tab) => tab.sessions.map((session) => session.id));
+}
+
+function mergeSessionRuntimes(
+  sessionRuntimes: Record<string, SessionRuntimeSummary>,
+  workspace: ProjectWorkspace,
+  previousWorkspace?: ProjectWorkspace,
+): Record<string, SessionRuntimeSummary> {
+  const nextSessionRuntimes = { ...sessionRuntimes };
+
+  if (previousWorkspace) {
+    for (const sessionId of collectWorkspaceSessionIds(previousWorkspace)) {
+      delete nextSessionRuntimes[sessionId];
+    }
   }
 
-  return {
-    ...workspaces,
-    [runtime.projectId]: {
-      ...workspace,
-      tabs: workspace.tabs.map((tab) => {
-        if (tab.id !== runtime.tabId) {
-          return tab;
-        }
+  for (const tab of workspace.tabs) {
+    for (const session of tab.sessions) {
+      if (session.runtime) {
+        nextSessionRuntimes[session.id] = session.runtime;
+        continue;
+      }
 
-        return {
-          ...tab,
-          sessions: tab.sessions.map((session) =>
-            session.id === runtime.sessionId ? { ...session, runtime } : session,
-          ),
-        };
-      }),
-    },
-  };
+      delete nextSessionRuntimes[session.id];
+    }
+  }
+
+  return nextSessionRuntimes;
 }
 
 function getStoredLastActiveTabs(): Record<string, string> {
@@ -202,6 +205,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   templates: [],
   selectedProjectId: null,
   workspaces: {},
+  sessionRuntimes: {},
   historyEntries: [],
   historyLoading: false,
   historyError: null,
@@ -228,6 +232,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         shellProfiles: data.shellProfiles,
         templates: data.templates,
         selectedProjectId,
+        workspaces: {},
+        sessionRuntimes: {},
       });
 
       if (selectedProjectId) {
@@ -250,6 +256,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       set((state) => ({
         workspaces: mergeWorkspace(state.workspaces, workspace),
         projects: upsertProject(state.projects, workspace.project),
+        sessionRuntimes: mergeSessionRuntimes(
+          state.sessionRuntimes,
+          workspace,
+          state.workspaces[workspace.project.id],
+        ),
       }));
     } catch (error) {
       set({
@@ -307,6 +318,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         selectedProjectId: workspace.project.id,
         projects: upsertProject(state.projects, workspace.project),
         workspaces: mergeWorkspace(state.workspaces, workspace),
+        sessionRuntimes: mergeSessionRuntimes(
+          state.sessionRuntimes,
+          workspace,
+          state.workspaces[workspace.project.id],
+        ),
       }));
     } catch (error) {
       set({
@@ -324,6 +340,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         loading: false,
         projects: upsertProject(state.projects, workspace.project),
         workspaces: mergeWorkspace(state.workspaces, workspace),
+        sessionRuntimes: mergeSessionRuntimes(
+          state.sessionRuntimes,
+          workspace,
+          state.workspaces[workspace.project.id],
+        ),
       }));
     } catch (error) {
       set({
@@ -339,7 +360,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       const bootstrapData = await window.termbag.deleteProject(projectId);
       set((state) => {
         const nextWorkspaces = { ...state.workspaces };
+        const deletedWorkspace = nextWorkspaces[projectId];
         delete nextWorkspaces[projectId];
+        const nextSessionRuntimes = { ...state.sessionRuntimes };
+        if (deletedWorkspace) {
+          for (const sessionId of collectWorkspaceSessionIds(deletedWorkspace)) {
+            delete nextSessionRuntimes[sessionId];
+          }
+        }
         const nextSelectedProjectId = bootstrapData.selectedProjectId;
         persistSelectedProjectId(nextSelectedProjectId);
         return {
@@ -349,6 +377,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           templates: bootstrapData.templates,
           selectedProjectId: nextSelectedProjectId,
           workspaces: nextWorkspaces,
+          sessionRuntimes: nextSessionRuntimes,
         };
       });
 
@@ -374,6 +403,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         loading: false,
         workspaces: mergeWorkspace(state.workspaces, workspace),
         projects: upsertProject(state.projects, workspace.project),
+        sessionRuntimes: mergeSessionRuntimes(
+          state.sessionRuntimes,
+          workspace,
+          state.workspaces[workspace.project.id],
+        ),
       }));
     } catch (error) {
       set({
@@ -431,6 +465,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         loading: false,
         workspaces: mergeWorkspace(state.workspaces, workspace),
         projects: upsertProject(state.projects, workspace.project),
+        sessionRuntimes: mergeSessionRuntimes(
+          state.sessionRuntimes,
+          workspace,
+          state.workspaces[workspace.project.id],
+        ),
       }));
     } catch (error) {
       set({
@@ -496,6 +535,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         loading: false,
         workspaces: mergeWorkspace(state.workspaces, workspace),
         projects: upsertProject(state.projects, workspace.project),
+        sessionRuntimes: mergeSessionRuntimes(
+          state.sessionRuntimes,
+          workspace,
+          state.workspaces[workspace.project.id],
+        ),
       }));
     } catch (error) {
       set({
@@ -516,6 +560,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         loading: false,
         workspaces: mergeWorkspace(state.workspaces, workspace),
         projects: upsertProject(state.projects, workspace.project),
+        sessionRuntimes: mergeSessionRuntimes(
+          state.sessionRuntimes,
+          workspace,
+          state.workspaces[workspace.project.id],
+        ),
       }));
     } catch (error) {
       set({
@@ -536,6 +585,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         loading: false,
         workspaces: mergeWorkspace(state.workspaces, workspace),
         projects: upsertProject(state.projects, workspace.project),
+        sessionRuntimes: mergeSessionRuntimes(
+          state.sessionRuntimes,
+          workspace,
+          state.workspaces[workspace.project.id],
+        ),
       }));
     } catch (error) {
       set({
@@ -554,6 +608,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       set((state) => ({
         workspaces: mergeWorkspace(state.workspaces, workspace),
         projects: upsertProject(state.projects, workspace.project),
+        sessionRuntimes: mergeSessionRuntimes(
+          state.sessionRuntimes,
+          workspace,
+          state.workspaces[workspace.project.id],
+        ),
       }));
     } catch (error) {
       set({
@@ -579,17 +638,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   applyTerminalEvent(event: TerminalEvent) {
     if (event.type === "status") {
       set((state) => ({
-        workspaces: applyRuntimeToWorkspaces(state.workspaces, event.runtime),
+        sessionRuntimes: {
+          ...state.sessionRuntimes,
+          [event.runtime.sessionId]: event.runtime,
+        },
       }));
     }
   },
 
-  setTabRuntime(projectId: string, runtime: SessionRuntimeSummary) {
+  setSessionRuntime(runtime: SessionRuntimeSummary) {
     set((state) => ({
-      workspaces: applyRuntimeToWorkspaces(state.workspaces, {
-        ...runtime,
-        projectId,
-      }),
+      sessionRuntimes: {
+        ...state.sessionRuntimes,
+        [runtime.sessionId]: runtime,
+      },
     }));
   },
 }));
