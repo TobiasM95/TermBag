@@ -627,6 +627,14 @@ export function App() {
     sidebar.focus();
   };
 
+  const focusActiveTerminalTarget = (): void => {
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>(".terminal-pane--focused .xterm-helper-textarea")
+        ?.focus();
+    });
+  };
+
   const focusSessionById = (tabId: string, sessionId: string) => {
     if (!activeTab || activeTab.id !== tabId || activeTab.focusedSessionId === sessionId) {
       return;
@@ -636,6 +644,11 @@ export function App() {
       tabId,
       sessionId,
     });
+  };
+
+  const handleCloseHistoryOverlay = (): void => {
+    setHistoryOpen(false);
+    focusActiveTerminalTarget();
   };
 
   const handleCloseTemplatesModal = () => {
@@ -678,6 +691,12 @@ export function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (historyOpen && event.key === "Escape") {
+        consumeShortcutEvent(event);
+        handleCloseHistoryOverlay();
+        return;
+      }
+
       if (terminalShortcutBypassArmed) {
         if (event.key === "Escape") {
           consumeShortcutEvent(event);
@@ -839,7 +858,7 @@ export function App() {
         return;
       }
 
-      event.preventDefault();
+      consumeShortcutEvent(event);
       setHistoryOpen(true);
       setRecallNotice(null);
       void loadHistory(activeSession.id);
@@ -852,6 +871,7 @@ export function App() {
     activeSession,
     activeTab,
     activeVisibleSessionIds,
+    handleCloseHistoryOverlay,
     focusSessionById,
     historyOpen,
     loadHistory,
@@ -1366,7 +1386,7 @@ export function App() {
           isLoading={historyLoading}
           error={historyError}
           notice={recallNotice}
-          onClose={() => setHistoryOpen(false)}
+          onClose={handleCloseHistoryOverlay}
           onSelect={async (commandText) => {
             const result = await window.termbag.recallHistory({
               sessionId: activeSession.id,
@@ -1374,7 +1394,7 @@ export function App() {
             });
             if (result.applied) {
               setRecallNotice("Command inserted into the tracked prompt buffer.");
-              setHistoryOpen(false);
+              handleCloseHistoryOverlay();
             } else {
               setRecallNotice(result.reason ?? "History insertion was not applied.");
             }
