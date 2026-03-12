@@ -53,7 +53,7 @@ interface AppState {
   closeTab(tabId: string): Promise<void>;
   applyLayoutPreset(input: ApplyLayoutPresetInput): Promise<void>;
   setFocusedSession(input: SetFocusedSessionInput): Promise<void>;
-  loadHistory(projectId: string): Promise<void>;
+  loadHistory(sessionId: string): Promise<void>;
   applyTerminalEvent(event: TerminalEvent): void;
   setTabRuntime(projectId: string, runtime: SessionRuntimeSummary): void;
 }
@@ -562,10 +562,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  async loadHistory(projectId: string) {
-    set({ historyLoading: true, historyError: null });
+  async loadHistory(sessionId: string) {
+    set({ historyEntries: [], historyLoading: true, historyError: null });
     try {
-      const historyEntries = await window.termbag.listHistory({ projectId, limit: 150 });
+      const historyEntries = await window.termbag.listHistory({ sessionId, limit: 150 });
       set({ historyEntries, historyLoading: false });
     } catch (error) {
       set({

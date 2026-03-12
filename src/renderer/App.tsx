@@ -526,6 +526,17 @@ export function App() {
     );
   }, [activeTab]);
 
+  const activeHistoryScopeLabel = useMemo(() => {
+    if (!activeTab || !activeSession) {
+      return null;
+    }
+
+    const shellLabel =
+      shellProfiles.find((profile) => profile.id === activeSession.shellProfileId)?.label ??
+      activeSession.shellProfileId;
+    return `${activeTab.title} / ${shellLabel}`;
+  }, [activeSession, activeTab, shellProfiles]);
+
   const activeSessionsById = useMemo(() => {
     if (!activeTab) {
       return new Map<string, WorkspaceSession>();
@@ -812,7 +823,7 @@ export function App() {
       event.preventDefault();
       setHistoryOpen(true);
       setRecallNotice(null);
-      void loadHistory(selectedProjectId);
+      void loadHistory(activeSession.id);
     };
 
     window.addEventListener("keydown", onKeyDown, true);
@@ -1331,7 +1342,7 @@ export function App() {
 
       {historyOpen && selectedProject && activeTab && activeSession ? (
         <HistoryOverlay
-          activeTabId={activeTab.id}
+          scopeLabel={activeHistoryScopeLabel ?? activeSession.shellProfileId}
           entries={historyEntries}
           isLoading={historyLoading}
           error={historyError}
@@ -2412,7 +2423,7 @@ function ProjectModal({
 }
 
 interface HistoryOverlayProps {
-  activeTabId: string;
+  scopeLabel: string;
   entries: Array<{
     id: string;
     tabId: string | null;
@@ -2428,7 +2439,7 @@ interface HistoryOverlayProps {
 }
 
 function HistoryOverlay({
-  activeTabId,
+  scopeLabel,
   entries,
   isLoading,
   error,
@@ -2436,13 +2447,95 @@ function HistoryOverlay({
   onClose,
   onSelect,
 }: HistoryOverlayProps) {
+  const [selectedIndex, setSelectedIndex] = useState(() => (entries.length > 0 ? 0 : -1));
+  const entryRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  useEffect(() => {
+    setSelectedIndex((current) => {
+      if (entries.length === 0) {
+        return -1;
+      }
+      if (current < 0) {
+        return 0;
+      }
+      return Math.min(current, entries.length - 1);
+    });
+  }, [entries]);
+
+  useEffect(() => {
+    if (selectedIndex < 0) {
+      return;
+    }
+
+    entryRefs.current[selectedIndex]?.scrollIntoView({
+      block: "nearest",
+    });
+  }, [selectedIndex]);
+
+  useEffect(() => {
+    const onOverlayKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+
+      if (entries.length === 0) {
+        return;
+      }
+
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        event.stopPropagation();
+        setSelectedIndex((current) => Math.min(current + 1, entries.length - 1));
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        event.stopPropagation();
+        setSelectedIndex((current) => Math.max(current - 1, 0));
+        return;
+      }
+
+      if (event.key === "Home") {
+        event.preventDefault();
+        event.stopPropagation();
+        setSelectedIndex(0);
+        return;
+      }
+
+      if (event.key === "End") {
+        event.preventDefault();
+        event.stopPropagation();
+        setSelectedIndex(entries.length - 1);
+        return;
+      }
+
+      if (event.key === "Enter" && selectedIndex >= 0) {
+        const entry = entries[selectedIndex];
+        if (!entry) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        void onSelect(entry.commandText);
+      }
+    };
+
+    window.addEventListener("keydown", onOverlayKeyDown, true);
+    return () => window.removeEventListener("keydown", onOverlayKeyDown, true);
+  }, [entries, onClose, onSelect, selectedIndex]);
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal modal--history" onClick={(event) => event.stopPropagation()}>
         <div className="history-header">
           <div>
-            <h3>Project history</h3>
-            <p>Newest first. Native shell Up/Down history remains unchanged.</p>
+            <h3>Session history</h3>
+            <p>{scopeLabel}. Up/Down selects, Enter inserts. Native shell history stays separate.</p>
           </div>
           <button type="button" className="ghost-button" onClick={onClose}>
             Close
@@ -2455,14 +2548,19 @@ function HistoryOverlay({
         <div className="history-list">
           {isLoading ? <p>Loading history...</p> : null}
           {!isLoading && entries.length === 0 ? (
-            <p>No commands captured for this project yet.</p>
+            <p>No commands captured for this shell yet.</p>
           ) : null}
-          {entries.map((entry) => (
+          {entries.map((entry, index) => (
             <button
               key={entry.id}
               type="button"
-              className={`history-entry ${entry.tabId === activeTabId ? "history-entry--same-tab" : ""}`}
+              ref={(element) => {
+                entryRefs.current[index] = element;
+              }}
+              className={`history-entry ${index === selectedIndex ? "history-entry--selected" : ""}`}
+              aria-selected={index === selectedIndex}
               onClick={() => void onSelect(entry.commandText)}
+              onMouseEnter={() => setSelectedIndex(index)}
             >
               <code>{entry.commandText}</code>
               <span>{entry.cwd ?? "cwd unavailable"}</span>

@@ -1264,6 +1264,20 @@ export class DatabaseService {
     return rows.map(mapHistory);
   }
 
+  listHistoryForSession(sessionId: string, limit = 100): HistoryEntry[] {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           id, project_id, tab_id, session_id, shell_profile_id, cwd, command_text, source, created_at
+         FROM history_entries
+         WHERE session_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(sessionId, limit) as Record<string, unknown>[];
+    return rows.map(mapHistory);
+  }
+
   close(): void {
     this.db.close();
   }

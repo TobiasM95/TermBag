@@ -20,6 +20,7 @@ class FakeDatabaseService {
   private readonly sessions = new Map<string, SavedTerminalSession>();
   private readonly shellProfiles = new Map<string, ShellProfile>();
   private readonly templates = new Map<string, WorkspaceTemplate>();
+  historyEntriesBySession = new Map<string, HistoryEntry[]>();
 
   upsertShellProfiles(profiles: ShellProfileAvailability[]): void {
     for (const profile of profiles) {
@@ -269,6 +270,10 @@ class FakeDatabaseService {
     return [];
   }
 
+  listHistoryForSession(sessionId: string, limit = 100): HistoryEntry[] {
+    return this.historyEntriesBySession.get(sessionId)?.slice(0, limit) ?? [];
+  }
+
   touchProject(_projectId: string): void {}
 
   close(): void {}
@@ -365,6 +370,41 @@ describe("AppService", () => {
     const afterClose = await service.closeTab(firstTabId);
     expect(afterClose.tabs).toHaveLength(1);
     expect(ptyManager.closedTabIds).toContain(firstTabId);
+  });
+
+  it("lists history for the requested session only", () => {
+    const database = new FakeDatabaseService();
+    const service = new AppService(
+      database as never,
+      new FakeShellCatalog() as never,
+      new FakePtyManager() as never,
+    );
+
+    const workspace = service.createProject({
+      name: "Repo",
+      rootPath: "C:\\Work\\Repo",
+    });
+    const sessionId = workspace.tabs[0]!.sessions[0]!.id;
+    database.historyEntriesBySession.set(sessionId, [
+      {
+        id: "history-1",
+        projectId: workspace.project.id,
+        tabId: workspace.tabs[0]!.id,
+        sessionId,
+        shellProfileId: "pwsh",
+        cwd: "C:\\Work\\Repo",
+        commandText: "git status",
+        source: "integration",
+        createdAt: "2026-03-12T12:00:00.000Z",
+      },
+    ]);
+
+    expect(service.listHistory(sessionId)).toEqual([
+      expect.objectContaining({
+        sessionId,
+        commandText: "git status",
+      }),
+    ]);
   });
 
   it("applies layout presets by creating visible sessions and caching hidden ones", () => {

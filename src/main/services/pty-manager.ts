@@ -57,6 +57,8 @@ interface RuntimeSession {
   errorMessage: string | null;
   promptTrackingValid: boolean;
   currentInputBuffer: string;
+  inputCursorIndex: number;
+  pendingSubmittedCommand: string | null;
   alternateScreenActive: boolean;
   suppressInitialRenderNoise: boolean;
   currentCwd: string | null;
@@ -177,6 +179,7 @@ export class PtyManager {
         const promptReady = markPromptReady();
         runtime.promptTrackingValid = promptReady.promptTrackingValid;
         runtime.currentInputBuffer = promptReady.currentInputBuffer;
+        runtime.inputCursorIndex = promptReady.inputCursorIndex;
       }
 
       pty.onData((chunk) => {
@@ -193,6 +196,8 @@ export class PtyManager {
         runtime.pty = null;
         runtime.promptTrackingValid = false;
         runtime.currentInputBuffer = "";
+        runtime.inputCursorIndex = 0;
+        runtime.pendingSubmittedCommand = null;
         runtime.snapshotDirty = true;
         void this.flushSnapshot(runtime);
         this.emitStatus(runtime);
@@ -239,25 +244,26 @@ export class PtyManager {
       {
         promptTrackingValid: runtime.promptTrackingValid,
         currentInputBuffer: runtime.currentInputBuffer,
+        inputCursorIndex: runtime.inputCursorIndex,
       },
       data,
     );
     runtime.promptTrackingValid = nextState.promptTrackingValid;
     runtime.currentInputBuffer = nextState.currentInputBuffer;
+    runtime.inputCursorIndex = nextState.inputCursorIndex;
 
-    if (data === "\r" && priorValidity && !runtime.alternateScreenActive) {
+    if (
+      data === "\r" &&
+      priorValidity &&
+      !runtime.alternateScreenActive
+    ) {
       const commandText = priorBuffer.trim();
       if (commandText) {
-        this.database.addHistoryEntry({
-          id: crypto.randomUUID(),
-          projectId: runtime.projectId,
-          tabId: runtime.tabId,
-          sessionId,
-          shellProfileId: runtime.shellProfileId,
-          cwd: runtime.currentCwd,
-          commandText: priorBuffer,
-          source: runtime.supportsIntegration ? "integration" : "input_capture",
-        });
+        if (runtime.supportsIntegration) {
+          runtime.pendingSubmittedCommand = priorBuffer;
+        } else {
+          this.recordHistoryEntry(runtime, priorBuffer, "input_capture");
+        }
       }
 
       if (runtime.shellProfileId === "cmd") {
@@ -291,12 +297,18 @@ export class PtyManager {
       };
     }
 
+    const cursorDistanceToEnd = runtime.currentInputBuffer.length - runtime.inputCursorIndex;
+    if (cursorDistanceToEnd > 0) {
+      runtime.pty.write("\u001b[C".repeat(cursorDistanceToEnd));
+    }
+
     if (runtime.currentInputBuffer.length > 0) {
       runtime.pty.write("\u007f".repeat(runtime.currentInputBuffer.length));
     }
 
     runtime.pty.write(commandText);
     runtime.currentInputBuffer = commandText;
+    runtime.inputCursorIndex = commandText.length;
     this.emitStatus(runtime);
 
     return {
@@ -377,6 +389,8 @@ export class PtyManager {
       errorMessage: null,
       promptTrackingValid: INITIAL_INPUT_TRACKING_STATE.promptTrackingValid,
       currentInputBuffer: INITIAL_INPUT_TRACKING_STATE.currentInputBuffer,
+      inputCursorIndex: INITIAL_INPUT_TRACKING_STATE.inputCursorIndex,
+      pendingSubmittedCommand: null,
       alternateScreenActive: false,
       suppressInitialRenderNoise: true,
       currentCwd: session.lastKnownCwd,
@@ -413,6 +427,8 @@ export class PtyManager {
       runtime.alternateScreenActive = true;
       runtime.promptTrackingValid = false;
       runtime.currentInputBuffer = "";
+      runtime.inputCursorIndex = 0;
+      runtime.pendingSubmittedCommand = null;
     }
     if (parsed.exitedAlternateScreen) {
       runtime.alternateScreenActive = false;
@@ -425,6 +441,11 @@ export class PtyManager {
       this.persistCwdAndTitle(tab, session, shellProfile, cwd);
     }
 
+    for (const commandText of parsed.commandSignals) {
+      runtime.pendingSubmittedCommand = null;
+      this.recordHistoryEntry(runtime, commandText, "integration");
+    }
+
     if (shellProfile.id === "cmd") {
       const inferred = inferCmdPromptCwdFromOutput(runtime.currentCwd, displayData);
       if (inferred && inferred !== runtime.currentCwd) {
@@ -434,13 +455,19 @@ export class PtyManager {
     }
 
     if (parsed.promptSignals.length > 0) {
+      if (runtime.pendingSubmittedCommand) {
+        this.recordHistoryEntry(runtime, runtime.pendingSubmittedCommand, "input_capture");
+        runtime.pendingSubmittedCommand = null;
+      }
       const promptReady = markPromptReady();
       runtime.promptTrackingValid = promptReady.promptTrackingValid;
       runtime.currentInputBuffer = promptReady.currentInputBuffer;
+      runtime.inputCursorIndex = promptReady.inputCursorIndex;
     } else if (shellProfile.id === "cmd" && /[A-Za-z]:\\.*>\s*$/.test(displayData.trimEnd())) {
       const promptReady = markPromptReady();
       runtime.promptTrackingValid = promptReady.promptTrackingValid;
       runtime.currentInputBuffer = promptReady.currentInputBuffer;
+      runtime.inputCursorIndex = promptReady.inputCursorIndex;
     }
 
     if (
@@ -516,6 +543,27 @@ export class PtyManager {
       runtime.flushTimer = null;
       void this.flushSnapshot(runtime);
     }, SNAPSHOT_DEBOUNCE_MS);
+  }
+
+  private recordHistoryEntry(
+    runtime: RuntimeSession,
+    commandText: string,
+    source: "integration" | "input_capture",
+  ): void {
+    if (!commandText.trim()) {
+      return;
+    }
+
+    this.database.addHistoryEntry({
+      id: crypto.randomUUID(),
+      projectId: runtime.projectId,
+      tabId: runtime.tabId,
+      sessionId: runtime.sessionId,
+      shellProfileId: runtime.shellProfileId,
+      cwd: runtime.currentCwd,
+      commandText,
+      source,
+    });
   }
 
   private async flushSnapshot(runtime: RuntimeSession): Promise<void> {

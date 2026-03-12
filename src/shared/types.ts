@@ -263,7 +263,7 @@ export interface ResizeSessionInput {
 }
 
 export interface HistoryQuery {
-  projectId: string;
+  sessionId: string;
   limit?: number;
 }
 

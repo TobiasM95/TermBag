@@ -63,7 +63,7 @@ interface AppServiceContract {
   resizeSession(sessionId: string, cols: number, rows: number): void;
   writeToSession(sessionId: string, data: string): void;
   restartSession(input: ActivateSessionInput): unknown;
-  listHistory(projectId: string, limit?: number): unknown;
+  listHistory(sessionId: string, limit?: number): unknown;
   recallHistory(sessionId: string, commandText: string): unknown;
   prepareForQuit(): Promise<void>;
   shutdown(): Promise<void>;
@@ -291,7 +291,7 @@ function registerIpcHandlers(): void {
     appService!.restartSession(input),
   );
   ipcMain.handle(IPC_CHANNELS.listHistory, (_event, query: HistoryQuery) =>
-    appService!.listHistory(query.projectId, query.limit),
+    appService!.listHistory(query.sessionId, query.limit),
   );
   ipcMain.handle(IPC_CHANNELS.recallHistory, (_event, input: RecallHistoryInput) =>
     appService!.recallHistory(input.sessionId, input.commandText),

@@ -2,6 +2,7 @@ import headlessPkg from "@xterm/headless";
 import serializePkg from "@xterm/addon-serialize";
 import { describe, expect, it } from "vitest";
 import {
+  applyInputToTrackingState,
   buildTerminalTranscript,
   countSnapshotBytes,
   inferCmdCwdFromSubmittedCommand,
@@ -123,7 +124,15 @@ describe("PowerShell integration parsing", () => {
 
     expect(parsed.cwdSignals).toEqual(["C:\\Work\\Repo"]);
     expect(parsed.promptSignals).toEqual(["ready"]);
+    expect(parsed.commandSignals).toEqual([]);
     expect(parsed.sanitized).toBe("PS C:\\Work\\Repo> ");
+  });
+
+  it("extracts submitted command markers", () => {
+    const parsed = parseIntegrationChunk("\u001b]633;TermBagCommand=git%20status\u0007");
+
+    expect(parsed.commandSignals).toEqual(["git status"]);
+    expect(parsed.sanitized).toBe("");
   });
 
   it("preserves generic ANSI sequences for terminal replay", () => {
@@ -162,6 +171,8 @@ describe("shell bootstrap scripts", () => {
     expect(script).toContain("$TranscriptPath = 'C:\\Temp\\bob''s-history.txt'");
     expect(script).toContain("[Console]::Write($text)");
     expect(script).toContain("function global:prompt {");
+    expect(script).toContain("Set-PSReadLineOption -AddToHistoryHandler");
+    expect(script).toContain("]633;TermBagCommand=");
   });
 });
 
@@ -185,6 +196,30 @@ describe("prompt readiness", () => {
     expect(markPromptReady()).toEqual({
       promptTrackingValid: true,
       currentInputBuffer: "",
+      inputCursorIndex: 0,
     });
+  });
+
+  it("tracks cursor-aware prompt edits", () => {
+    let state = markPromptReady();
+    state = applyInputToTrackingState(state, "abc");
+    state = applyInputToTrackingState(state, "\u001b[D");
+    state = applyInputToTrackingState(state, "\u001b[D");
+    state = applyInputToTrackingState(state, "Z");
+    state = applyInputToTrackingState(state, "\u001b[3~");
+
+    expect(state).toEqual({
+      promptTrackingValid: true,
+      currentInputBuffer: "aZc",
+      inputCursorIndex: 2,
+    });
+  });
+
+  it("invalidates tracking for unsupported history-navigation escape sequences", () => {
+    const state = applyInputToTrackingState(markPromptReady(), "\u001b[A");
+
+    expect(state.promptTrackingValid).toBe(false);
+    expect(state.currentInputBuffer).toBe("");
+    expect(state.inputCursorIndex).toBe(0);
   });
 });

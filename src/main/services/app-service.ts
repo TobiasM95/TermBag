@@ -411,9 +411,9 @@ export class AppService {
     };
   }
 
-  listHistory(projectId: string, limit = 100): HistoryEntry[] {
-    this.requireProject(projectId);
-    return this.database.listHistoryForProject(projectId, limit);
+  listHistory(sessionId: string, limit = 100): HistoryEntry[] {
+    this.requireSession(sessionId);
+    return this.database.listHistoryForSession(sessionId, limit);
   }
 
   recallHistory(sessionId: string, commandText: string): RecallHistoryResult {

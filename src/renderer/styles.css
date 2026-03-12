@@ -1152,7 +1152,7 @@ html[data-theme="light"] .modal-backdrop {
   text-align: left;
 }
 
-.history-entry--same-tab {
+.history-entry--selected {
   border-color: var(--accent-strong);
   background: var(--accent-soft);
 }
