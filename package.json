@@ -19,8 +19,8 @@
     "build:renderer": "vite build",
     "preview": "cross-env NODE_ENV=production electron dist-electron/main/index.js",
     "test": "vitest run",
-    "package:win": "pnpm build && electron-builder --win nsis portable && node scripts/patch-windows-artifacts.mjs",
-    "package:win:dir": "pnpm build && electron-builder --win dir && node scripts/patch-windows-artifacts.mjs"
+    "package:win": "pnpm build && electron-builder --win nsis portable --publish never && node scripts/patch-windows-artifacts.mjs",
+    "package:win:dir": "pnpm build && electron-builder --win dir --publish never && node scripts/patch-windows-artifacts.mjs"
   },
   "build": {
     "appId": "com.tobiasm95.termbag",
