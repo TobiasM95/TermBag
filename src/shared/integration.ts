@@ -67,7 +67,7 @@ export function getPowerShellBootstrapLines(): string[] {
 }
 
 export function buildPowerShellBootstrapScript(): string {
-  return getPowerShellBootstrapLines().join("; ");
+  return getPowerShellBootstrapLines().join("\r\n");
 }
 
 export function parseIntegrationChunk(chunk: string): ParsedIntegrationChunk {

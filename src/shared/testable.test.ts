@@ -1,8 +1,10 @@
+import { execFileSync } from "node:child_process";
 import headlessPkg from "@xterm/headless";
 import serializePkg from "@xterm/addon-serialize";
 import { describe, expect, it } from "vitest";
 import {
   applyInputToTrackingState,
+  buildPowerShellBootstrapScript,
   buildTerminalTranscript,
   countSnapshotBytes,
   inferCmdCwdFromSubmittedCommand,
@@ -180,6 +182,25 @@ describe("shell bootstrap scripts", () => {
     expect(script).toContain("function global:prompt {");
     expect(script).toContain("Set-PSReadLineOption -AddToHistoryHandler");
     expect(script).toContain("]633;TermBagCommand=");
+  });
+
+  it("builds an inline PowerShell bootstrap script that parses when passed to -Command", () => {
+    const script = buildPowerShellBootstrapScript();
+
+    expect(script).toContain("\r\n");
+    expect(script).toContain("$script:__TermBagEmitAcceptedCommand = {\r\n");
+
+    if (process.platform !== "win32") {
+      return;
+    }
+
+    const output = execFileSync(
+      "powershell.exe",
+      ["-NoLogo", "-NoProfile", "-Command", `${script}\r\nWrite-Output 'parse-ok'`],
+      { encoding: "utf8" },
+    );
+
+    expect(output).toContain("parse-ok");
   });
 });
 
