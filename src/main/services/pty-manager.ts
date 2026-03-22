@@ -301,25 +301,20 @@ export class PtyManager {
       };
     }
 
-    if (!runtime.promptTrackingValid) {
-      return {
-        applied: false,
-        reason: "Prompt tracking is not currently safe for insertion.",
-      };
-    }
-
-    const cursorDistanceToEnd = runtime.currentInputBuffer.length - runtime.inputCursorIndex;
-    if (cursorDistanceToEnd > 0) {
-      runtime.pty.write("\u001b[C".repeat(cursorDistanceToEnd));
-    }
-
-    if (runtime.currentInputBuffer.length > 0) {
-      runtime.pty.write("\u007f".repeat(runtime.currentInputBuffer.length));
-    }
-
     runtime.pty.write(commandText);
-    runtime.currentInputBuffer = commandText;
-    runtime.inputCursorIndex = commandText.length;
+    if (runtime.promptTrackingValid) {
+      const nextState = applyInputToTrackingState(
+        {
+          promptTrackingValid: runtime.promptTrackingValid,
+          currentInputBuffer: runtime.currentInputBuffer,
+          inputCursorIndex: runtime.inputCursorIndex,
+        },
+        commandText,
+      );
+      runtime.promptTrackingValid = nextState.promptTrackingValid;
+      runtime.currentInputBuffer = nextState.currentInputBuffer;
+      runtime.inputCursorIndex = nextState.inputCursorIndex;
+    }
     this.emitStatusIfChanged(runtime);
 
     return {

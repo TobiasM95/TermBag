@@ -222,6 +222,19 @@ describe("prompt readiness", () => {
     });
   });
 
+  it("tracks pasted text at the current cursor position", () => {
+    let state = markPromptReady();
+    state = applyInputToTrackingState(state, "abc");
+    state = applyInputToTrackingState(state, "\u001b[D");
+    state = applyInputToTrackingState(state, "XYZ");
+
+    expect(state).toEqual({
+      promptTrackingValid: true,
+      currentInputBuffer: "abXYZc",
+      inputCursorIndex: 5,
+    });
+  });
+
   it("invalidates tracking for unsupported history-navigation escape sequences", () => {
     const state = applyInputToTrackingState(markPromptReady(), "\u001b[A");
 

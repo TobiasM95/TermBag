@@ -1393,7 +1393,7 @@ export function App() {
               commandText,
             });
             if (result.applied) {
-              setRecallNotice("Command inserted into the tracked prompt buffer.");
+              setRecallNotice("Command pasted into the active shell input.");
               handleCloseHistoryOverlay();
             } else {
               setRecallNotice(result.reason ?? "History insertion was not applied.");
@@ -2574,7 +2574,7 @@ function HistoryOverlay({
         <div className="history-header">
           <div>
             <h3>Session history</h3>
-            <p>{scopeLabel}. Up/Down selects, Enter inserts. Native shell history stays separate.</p>
+            <p>{scopeLabel}. Up/Down selects, Enter pastes into the shell input. Native shell history stays separate.</p>
           </div>
           <button type="button" className="ghost-button" onClick={onClose}>
             Close
