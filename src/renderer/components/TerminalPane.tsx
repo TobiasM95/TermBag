@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import type { Project, WorkspaceSession, WorkspaceTab } from "../../shared/types";
+import { getTerminalTheme } from "../../shared/terminal-config";
 import { isSameTerminalSize, type TerminalSize } from "../../shared/terminal-size";
 import { createTerminalPerformanceMeter } from "../../shared/terminal-performance";
 import { useAppStore } from "../store/app-store";
@@ -104,56 +105,7 @@ export function TerminalPane({
       return;
     }
 
-    const terminalTheme =
-      themeMode === "dark"
-        ? {
-            background: "#010101",
-            foreground: "#E08421",
-            cursor: "#f0b66f",
-            selectionBackground: "rgba(240, 182, 111, 0.34)",
-            selectionInactiveBackground: "rgba(240, 182, 111, 0.22)",
-            selectionForeground: "#fff4e8",
-            black: "#050505",
-            red: "#ff5a36",
-            green: "#E08421",
-            yellow: "#f0b66f",
-            blue: "#E08421",
-            magenta: "#E08421",
-            cyan: "#E08421",
-            white: "#f3c58f",
-            brightBlack: "#6b4a20",
-            brightRed: "#ff845d",
-            brightGreen: "#f0b66f",
-            brightYellow: "#f8d5ac",
-            brightBlue: "#f0b66f",
-            brightMagenta: "#f0b66f",
-            brightCyan: "#f0b66f",
-            brightWhite: "#fff4e8",
-          }
-        : {
-            background: "#ffffff",
-            foreground: "#111111",
-            cursor: "#111111",
-            selectionBackground: "rgba(11, 92, 171, 0.28)",
-            selectionInactiveBackground: "rgba(11, 92, 171, 0.18)",
-            selectionForeground: "#111111",
-            black: "#111111",
-            red: "#aa2d00",
-            green: "#333333",
-            yellow: "#555555",
-            blue: "#111111",
-            magenta: "#222222",
-            cyan: "#333333",
-            white: "#666666",
-            brightBlack: "#444444",
-            brightRed: "#c24400",
-            brightGreen: "#555555",
-            brightYellow: "#777777",
-            brightBlue: "#222222",
-            brightMagenta: "#333333",
-            brightCyan: "#444444",
-            brightWhite: "#000000",
-          };
+    const terminalTheme = getTerminalTheme(themeMode);
 
     const terminal = new Terminal({
       convertEol: false,

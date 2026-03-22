@@ -22,6 +22,7 @@ import {
   parseIntegrationChunk,
   stripInitialTerminalNoise,
 } from "../../shared/testable.js";
+import { buildTerminalEnvironment } from "../../shared/terminal-config.js";
 import { deriveTabTitle } from "../../shared/paths.js";
 import type {
   ActivateSessionInput,
@@ -187,7 +188,7 @@ export class PtyManager {
         cwd: desiredCwd,
         name: "xterm-color",
         useConpty: true,
-        env: process.env,
+        env: buildTerminalEnvironment(process.env),
       });
 
       runtime.pty = pty;
