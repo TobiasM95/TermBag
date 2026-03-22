@@ -80,8 +80,31 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
-          gh release view $env:TAG *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+
+          $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$env:TAG"
+          $releaseExists = $false
+
+          try {
+            Invoke-RestMethod -Uri $uri -Headers $headers | Out-Null
+            $releaseExists = $true
+          }
+          catch {
+            $statusCode = $null
+            if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
+              $statusCode = [int]$_.Exception.Response.StatusCode
+            }
+
+            if ($statusCode -ne 404) {
+              throw "Failed to verify whether release $env:TAG exists. $($_.Exception.Message)"
+            }
+          }
+
+          if ($releaseExists) {
             throw "Release $env:TAG already exists. Bump package.json version before publishing again."
           }
 

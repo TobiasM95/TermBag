@@ -1,6 +1,6 @@
 {
   "name": "termbag",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "author": "TobiasM95",
   "description": "Windows-first terminal workspace with lazy restore and local persistence.",
