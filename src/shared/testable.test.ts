@@ -18,6 +18,7 @@ import {
 import {
   buildCmdBootstrapScript,
   buildPowerShellBootstrapFile,
+  getBootstrapTranscriptText,
 } from "../main/services/shell-bootstrap.js";
 
 const { Terminal: HeadlessTerminal } = headlessPkg;
@@ -187,6 +188,15 @@ describe("PowerShell integration parsing", () => {
 });
 
 describe("shell bootstrap scripts", () => {
+  it("strips the trailing transcript newline for cmd bootstrap replay", () => {
+    expect(
+      getBootstrapTranscriptText({ id: "cmd" }, "C:\\Temp>\r\n"),
+    ).toBe("C:\\Temp>");
+    expect(
+      getBootstrapTranscriptText({ id: "pwsh" }, "PS C:\\Temp> \r\n"),
+    ).toBe("PS C:\\Temp> \r\n");
+  });
+
   it("builds a cmd bootstrap script that types the transcript file", () => {
     expect(buildCmdBootstrapScript("C:\\Temp\\history.txt")).toContain(
       'type "C:\\Temp\\history.txt"',

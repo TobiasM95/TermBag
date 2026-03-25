@@ -41,6 +41,7 @@ import {
   cleanupBootstrapAssets,
   cleanupStaleBootstrapFiles,
   createShellBootstrapAssets,
+  getBootstrapTranscriptText,
 } from "./shell-bootstrap.js";
 
 const { Terminal: HeadlessTerminal } = xtermHeadlessPackage;
@@ -166,12 +167,14 @@ export class PtyManager {
 
     const desiredCwd = this.resolveSpawnCwd(project, session);
     const persistedSnapshot = this.database.getSnapshot(session.id);
-    const shouldBootstrapTranscript =
-      persistedSnapshot?.snapshotFormat === SNAPSHOT_FORMAT &&
-      Boolean(persistedSnapshot.transcriptText);
+    const bootstrapTranscriptText =
+      persistedSnapshot?.snapshotFormat === SNAPSHOT_FORMAT
+        ? getBootstrapTranscriptText(shellProfile, persistedSnapshot.transcriptText)
+        : "";
+    const shouldBootstrapTranscript = Boolean(bootstrapTranscriptText);
     const bootstrapAssets =
       shouldBootstrapTranscript
-        ? createShellBootstrapAssets(shellProfile, persistedSnapshot.transcriptText)
+        ? createShellBootstrapAssets(shellProfile, bootstrapTranscriptText)
         : null;
     const runtime = this.createRuntime(
       project.id,
@@ -191,7 +194,10 @@ export class PtyManager {
         bootstrapCleanupPaths: bootstrapAssets?.cleanupPaths ?? [],
       },
     );
-    await this.restoreRuntimeSnapshot(runtime, persistedSnapshot);
+    await this.restoreRuntimeSnapshot(runtime, persistedSnapshot, {
+      bootstrapReplayText: bootstrapTranscriptText,
+      appendBootstrapAlignmentNewline: shellProfile.id !== "cmd",
+    });
     this.runtimes.set(session.id, runtime);
 
     try {
@@ -762,6 +768,10 @@ export class PtyManager {
       serializedState: string;
       viewportOffsetFromBottom: number;
     } | null,
+    options?: {
+      bootstrapReplayText?: string;
+      appendBootstrapAlignmentNewline?: boolean;
+    },
   ): Promise<void> {
     if (!snapshot?.serializedState) {
       runtime.pendingBootstrapReplayText = "";
@@ -769,11 +779,15 @@ export class PtyManager {
     }
 
     await writeTerminalData(runtime.headless, snapshot.serializedState);
-    if (snapshot.transcriptText && runtime.headless.buffer.active.cursorX !== 0) {
+    if (
+      options?.appendBootstrapAlignmentNewline !== false &&
+      options?.bootstrapReplayText &&
+      runtime.headless.buffer.active.cursorX !== 0
+    ) {
       await writeTerminalData(runtime.headless, "\r\n");
     }
     runtime.lastSerializedByteCount = countSnapshotBytes(snapshot.serializedState);
-    runtime.pendingBootstrapReplayText = snapshot.transcriptText;
+    runtime.pendingBootstrapReplayText = options?.bootstrapReplayText ?? snapshot.transcriptText;
   }
 
   private recordHistoryEntry(

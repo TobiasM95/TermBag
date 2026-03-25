@@ -9,6 +9,7 @@ import type {
   TerminalSnapshot,
   TerminalEvent,
 } from "../../shared/types.js";
+import { getBootstrapTranscriptText } from "./shell-bootstrap.js";
 import { PtyManager } from "./pty-manager.js";
 
 class FakeDatabaseService {
@@ -317,6 +318,32 @@ describe("PtyManager snapshot restore", () => {
     expect(replay.serializedState).toContain("\u001b[31m");
     expect(replay.viewportOffsetFromBottom).toBe(0);
     expect(runtime.pendingBootstrapReplayText).toBe(snapshot.transcriptText);
+  });
+
+  it("keeps cmd restore on the prompt line without injecting an extra newline", async () => {
+    const { manager, runtime } = createRuntimeHarness({
+      shellProfileId: "cmd",
+      supportsIntegration: false,
+    });
+    const snapshot: TerminalSnapshot = {
+      sessionId: runtime.sessionId,
+      snapshotFormat: "plain-transcript-v1",
+      transcriptText: "C:\\Work\\Repo>\r\n",
+      serializedState: "C:\\Work\\Repo>",
+      viewportOffsetFromBottom: 0,
+      byteCount: 14,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await (manager as any).restoreRuntimeSnapshot(runtime, snapshot, {
+      bootstrapReplayText: getBootstrapTranscriptText({ id: "cmd" }, snapshot.transcriptText),
+      appendBootstrapAlignmentNewline: false,
+    });
+    const replay = await (manager as any).captureReplayState(runtime);
+
+    expect(runtime.pendingBootstrapReplayText).toBe("C:\\Work\\Repo>");
+    expect(replay.serializedState).toContain("C:\\Work\\Repo>");
+    expect(replay.serializedState).not.toContain("C:\\Work\\Repo>\r\n");
   });
 
   it("keeps the restored ANSI snapshot when cmd replay and prompt arrive in one chunk", async () => {
