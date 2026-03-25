@@ -180,5 +180,5 @@ export function inferCmdPromptCwdFromOutput(
     return previousCwd;
   }
 
-  return path.normalize(promptCwd);
+  return path.win32.normalize(promptCwd);
 }

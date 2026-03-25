@@ -176,12 +176,12 @@ export function inferCmdCwdFromSubmittedCommand(
 
   const normalizedTarget = target.trim().replace(/^"(.*)"$/, "$1");
   if (/^[A-Za-z]:\\/.test(normalizedTarget)) {
-    return path.normalize(normalizedTarget);
+    return path.win32.normalize(normalizedTarget);
   }
 
   if (!currentCwd) {
     return currentCwd;
   }
 
-  return path.normalize(path.resolve(currentCwd, normalizedTarget));
+  return path.win32.normalize(path.win32.resolve(currentCwd, normalizedTarget));
 }
