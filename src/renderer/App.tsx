@@ -4,6 +4,10 @@ import {
   flattenLayoutLeafSessionIds,
   getNextLayoutPaneSlot,
 } from "../shared/layout";
+import {
+  createSessionBorderPalette,
+  normalizeSessionBorderColor,
+} from "../shared/session-colors";
 import { TerminalPane } from "./components/TerminalPane";
 import { useAppStore } from "./store/app-store";
 import { createTerminalPerformanceMeter } from "../shared/terminal-performance";
@@ -44,6 +48,12 @@ type RenameTemplateState = {
 type ApplyTemplateState = {
   templateId: string;
   templateName: string;
+} | null;
+
+type SessionBorderColorState = {
+  sessionId: string;
+  shellLabel: string;
+  borderColor: string | null;
 } | null;
 
 type ThemeMode = "dark" | "light";
@@ -112,6 +122,23 @@ const LAYOUT_PRESETS: LayoutPresetDefinition[] = [
     description: "Two stacked panes on the left with one large pane on the right.",
   },
 ];
+
+const SESSION_BORDER_SWATCHES = [
+  { label: "Amber", value: "#e08421" },
+  { label: "Blue", value: "#3b82f6" },
+  { label: "Teal", value: "#14b8a6" },
+  { label: "Green", value: "#22c55e" },
+  { label: "Rose", value: "#e11d48" },
+  { label: "Slate", value: "#64748b" },
+] as const;
+
+function tryNormalizeSessionBorderColor(value: string): string | null {
+  try {
+    return normalizeSessionBorderColor(value);
+  } catch {
+    return null;
+  }
+}
 
 function detectMacPlatform(): boolean {
   if (typeof navigator === "undefined") {
@@ -327,6 +354,7 @@ export function App() {
   const closeTab = useAppStore((state) => state.closeTab);
   const applyLayoutPreset = useAppStore((state) => state.applyLayoutPreset);
   const setFocusedSession = useAppStore((state) => state.setFocusedSession);
+  const setSessionBorderColor = useAppStore((state) => state.setSessionBorderColor);
   const loadHistory = useAppStore((state) => state.loadHistory);
   const applyTerminalEvent = useAppStore((state) => state.applyTerminalEvent);
   const clearError = useAppStore((state) => state.clearError);
@@ -346,6 +374,8 @@ export function App() {
   const [renameTabState, setRenameTabState] = useState<RenameTabState>(null);
   const [renameTemplateState, setRenameTemplateState] = useState<RenameTemplateState>(null);
   const [applyTemplateState, setApplyTemplateState] = useState<ApplyTemplateState>(null);
+  const [sessionBorderColorState, setSessionBorderColorState] =
+    useState<SessionBorderColorState>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === "undefined") {
       return false;
@@ -658,6 +688,24 @@ export function App() {
     setApplyTemplateState(null);
   };
 
+  const handleCloseSessionBorderColorModal = () => {
+    setSessionBorderColorState(null);
+    focusActiveTerminalTarget();
+  };
+
+  const openSessionBorderColorModal = (session: WorkspaceSession) => {
+    const shellLabel =
+      shellProfiles.find((profile) => profile.id === session.shellProfileId)?.label ??
+      session.shellProfileId;
+
+    setTabContextMenu(null);
+    setSessionBorderColorState({
+      sessionId: session.id,
+      shellLabel,
+      borderColor: session.borderColor,
+    });
+  };
+
   const handleImportTemplates = async () => {
     const result = await importTemplates();
     if (!result || result.importedCount === 0) {
@@ -694,6 +742,12 @@ export function App() {
       if (historyOpen && event.key === "Escape") {
         consumeShortcutEvent(event);
         handleCloseHistoryOverlay();
+        return;
+      }
+
+      if (sessionBorderColorState && event.key === "Escape") {
+        consumeShortcutEvent(event);
+        handleCloseSessionBorderColorModal();
         return;
       }
 
@@ -755,7 +809,8 @@ export function App() {
         shellPickerOpen ||
         renameTabState ||
         renameTemplateState ||
-        applyTemplateState
+        applyTemplateState ||
+        sessionBorderColorState
       ) {
         return;
       }
@@ -891,9 +946,11 @@ export function App() {
     shellPickerOpen,
     renameTemplateState,
     applyTemplateState,
+    sessionBorderColorState,
     sortedProjects,
     tabSessionHotkeyModifier,
     focusSidebarTarget,
+    handleCloseSessionBorderColorModal,
   ]);
 
   const handleProjectSubmit = async (
@@ -1176,6 +1233,7 @@ export function App() {
                   focusedSessionId={activeTab.focusedSessionId}
                   themeMode={themeMode}
                   onFocusSession={(sessionId) => focusSessionById(activeTab.id, sessionId)}
+                  onOpenSessionBorderColor={openSessionBorderColorModal}
                 />
               ) : null}
             </div>
@@ -1379,6 +1437,22 @@ export function App() {
         />
       ) : null}
 
+      {sessionBorderColorState ? (
+        <SessionBorderColorModal
+          themeMode={themeMode}
+          shellLabel={sessionBorderColorState.shellLabel}
+          initialBorderColor={sessionBorderColorState.borderColor}
+          onClose={handleCloseSessionBorderColorModal}
+          onSubmit={async (borderColor) => {
+            await setSessionBorderColor({
+              sessionId: sessionBorderColorState.sessionId,
+              borderColor,
+            });
+            handleCloseSessionBorderColorModal();
+          }}
+        />
+      ) : null}
+
       {historyOpen && selectedProject && activeTab && activeSession ? (
         <HistoryOverlay
           scopeLabel={activeHistoryScopeLabel ?? activeSession.shellProfileId}
@@ -1413,6 +1487,7 @@ interface TabLayoutViewProps {
   focusedSessionId: string;
   themeMode: ThemeMode;
   onFocusSession(sessionId: string): void;
+  onOpenSessionBorderColor(session: WorkspaceSession): void;
 }
 
 function TabLayoutView({
@@ -1423,6 +1498,7 @@ function TabLayoutView({
   focusedSessionId,
   themeMode,
   onFocusSession,
+  onOpenSessionBorderColor,
 }: TabLayoutViewProps) {
   if (node.kind === "leaf") {
     const session = sessionsById.get(node.sessionId);
@@ -1449,6 +1525,7 @@ function TabLayoutView({
           themeMode={themeMode}
           isFocused={session.id === focusedSessionId}
           onFocusSession={() => onFocusSession(session.id)}
+          onOpenBorderColorModal={() => onOpenSessionBorderColor(session)}
         />
       </div>
     );
@@ -1473,6 +1550,7 @@ function TabLayoutView({
             focusedSessionId={focusedSessionId}
             themeMode={themeMode}
             onFocusSession={onFocusSession}
+            onOpenSessionBorderColor={onOpenSessionBorderColor}
           />
         </div>
       ))}
@@ -2235,6 +2313,159 @@ function TabContextMenu({ x, y, onRename, onClose }: TabContextMenuProps) {
       >
         Rename
       </button>
+    </div>
+  );
+}
+
+interface SessionBorderColorModalProps {
+  themeMode: ThemeMode;
+  shellLabel: string;
+  initialBorderColor: string | null;
+  onClose(): void;
+  onSubmit(borderColor: string | null): Promise<void>;
+}
+
+function SessionBorderColorModal({
+  themeMode,
+  shellLabel,
+  initialBorderColor,
+  onClose,
+  onSubmit,
+}: SessionBorderColorModalProps) {
+  const fallbackColor = initialBorderColor ?? SESSION_BORDER_SWATCHES[0]!.value;
+  const [useDefault, setUseDefault] = useState(initialBorderColor === null);
+  const [draftColor, setDraftColor] = useState((initialBorderColor ?? fallbackColor).toUpperCase());
+
+  const normalizedDraftColor = useDefault ? null : tryNormalizeSessionBorderColor(draftColor);
+  const activeColor = normalizedDraftColor ?? fallbackColor;
+  const previewPalette = createSessionBorderPalette(useDefault ? null : activeColor, themeMode);
+
+  const applyDraftColor = (nextColor: string) => {
+    const normalized = normalizeSessionBorderColor(nextColor);
+    if (!normalized) {
+      return;
+    }
+
+    setUseDefault(false);
+    setDraftColor(normalized.toUpperCase());
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal modal--compact session-border-modal"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h3>Pane border color</h3>
+        <p>
+          {shellLabel}. Pick one base color and the app will derive focused and unfocused
+          border tones for this pane automatically.
+        </p>
+
+        <div className="session-border-preview-list">
+          <div
+            className={`session-border-preview-card ${useDefault ? "session-border-preview-card--default" : ""}`}
+            style={
+              previewPalette
+                ? {
+                    borderColor: previewPalette.focused,
+                    boxShadow: `inset 0 0 0 1px ${previewPalette.focused}`,
+                  }
+                : undefined
+            }
+          >
+            <strong>Focused</strong>
+            <span>
+              {previewPalette ? previewPalette.focused.toUpperCase() : "Theme default"}
+            </span>
+          </div>
+          <div
+            className={`session-border-preview-card ${useDefault ? "session-border-preview-card--default" : ""}`}
+            style={previewPalette ? { borderColor: previewPalette.unfocused } : undefined}
+          >
+            <strong>Unfocused</strong>
+            <span>
+              {previewPalette ? previewPalette.unfocused.toUpperCase() : "Theme default"}
+            </span>
+          </div>
+        </div>
+
+        <label className="session-border-field">
+          <span>Base color</span>
+          <div className="session-border-field__controls">
+            <input
+              type="color"
+              className="session-border-field__picker"
+              value={activeColor}
+              disabled={useDefault}
+              onChange={(event) => applyDraftColor(event.target.value)}
+            />
+            <input
+              value={draftColor}
+              disabled={useDefault}
+              placeholder="#3B82F6"
+              onChange={(event) => {
+                setUseDefault(false);
+                setDraftColor(event.target.value);
+              }}
+            />
+          </div>
+          {!useDefault && !normalizedDraftColor ? (
+            <span className="session-border-field__error">
+              Enter a valid hex color like #3B82F6.
+            </span>
+          ) : null}
+        </label>
+
+        <div className="session-border-swatches">
+          {SESSION_BORDER_SWATCHES.map((swatch) => {
+            const isActive =
+              !useDefault &&
+              normalizedDraftColor?.toLowerCase() === swatch.value.toLowerCase();
+
+            return (
+              <button
+                key={swatch.value}
+                type="button"
+                className={`session-border-swatch ${isActive ? "session-border-swatch--active" : ""}`}
+                title={swatch.label}
+                aria-label={swatch.label}
+                onClick={() => applyDraftColor(swatch.value)}
+              >
+                <span
+                  className="session-border-swatch__chip"
+                  style={{ backgroundColor: swatch.value }}
+                />
+                <span>{swatch.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="session-border-modal__footer">
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => setUseDefault(true)}
+          >
+            Use default border
+          </button>
+        </div>
+
+        <div className="modal__actions">
+          <button type="button" className="ghost-button" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            disabled={!useDefault && !normalizedDraftColor}
+            onClick={() => void onSubmit(useDefault ? null : normalizedDraftColor)}
+          >
+            Save
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

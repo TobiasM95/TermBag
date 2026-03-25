@@ -150,6 +150,7 @@ class FakeDatabaseService {
       tabId: string;
       shellProfileId: string;
       lastKnownCwd: string | null;
+      borderColor?: string | null;
       sessionOrder: number;
     };
   }) {
@@ -163,6 +164,7 @@ class FakeDatabaseService {
     };
     const session: SavedTerminalSession = {
       ...params.session,
+      borderColor: params.session.borderColor ?? null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -186,6 +188,7 @@ class FakeDatabaseService {
       tabId: string;
       shellProfileId: string;
       lastKnownCwd: string | null;
+      borderColor?: string | null;
       sessionOrder: number;
       createdAt?: string;
       updatedAt?: string;
@@ -204,6 +207,7 @@ class FakeDatabaseService {
     const sessions = params.sessions.map((paramsSession) => {
       const session: SavedTerminalSession = {
         ...paramsSession,
+        borderColor: paramsSession.borderColor ?? null,
         createdAt: paramsSession.createdAt ?? timestamp,
         updatedAt: paramsSession.updatedAt ?? timestamp,
       };
@@ -229,6 +233,7 @@ class FakeDatabaseService {
     tabId: string;
     shellProfileId: string;
     lastKnownCwd: string | null;
+    borderColor?: string | null;
     sessionOrder: number;
     createdAt?: string;
     updatedAt?: string;
@@ -236,6 +241,7 @@ class FakeDatabaseService {
     const timestamp = new Date().toISOString();
     const session: SavedTerminalSession = {
       ...params,
+      borderColor: params.borderColor ?? null,
       createdAt: params.createdAt ?? timestamp,
       updatedAt: params.updatedAt ?? timestamp,
     };
@@ -492,6 +498,35 @@ describe("AppService", () => {
     );
   });
 
+  it("persists session border colors as part of the workspace state", () => {
+    const database = new FakeDatabaseService();
+    const service = new AppService(
+      database as never,
+      new FakeShellCatalog() as never,
+      new FakePtyManager() as never,
+    );
+
+    const workspace = service.createProject({
+      name: "Repo",
+      rootPath: "C:\\Work\\Repo",
+    });
+    const sessionId = workspace.tabs[0]!.sessions[0]!.id;
+
+    const coloredWorkspace = service.setSessionBorderColor({
+      sessionId,
+      borderColor: "#3B82F6",
+    });
+    expect(coloredWorkspace.tabs[0]!.sessions[0]!.borderColor).toBe("#3b82f6");
+    expect(database.getSession(sessionId)?.borderColor).toBe("#3b82f6");
+
+    const resetWorkspace = service.setSessionBorderColor({
+      sessionId,
+      borderColor: null,
+    });
+    expect(resetWorkspace.tabs[0]!.sessions[0]!.borderColor).toBeNull();
+    expect(database.getSession(sessionId)?.borderColor).toBeNull();
+  });
+
   it("saves templates from visible panes only and encodes working directories optionally", () => {
     const database = new FakeDatabaseService();
     const service = new AppService(
@@ -512,6 +547,7 @@ describe("AppService", () => {
     database.updateSession({
       ...visibleSessions[0]!,
       lastKnownCwd: "C:\\Work\\Repo",
+      borderColor: "#3b82f6",
     });
     database.updateSession({
       ...visibleSessions[1]!,
@@ -536,6 +572,7 @@ describe("AppService", () => {
       kind: "relative",
       value: ".",
     });
+    expect(template!.tabs[0]!.panes[0]!.borderColor).toBe("#3b82f6");
     expect(template!.tabs[0]!.panes[1]!.cwd).toEqual({
       kind: "relative",
       value: "src",
@@ -567,7 +604,7 @@ describe("AppService", () => {
             version: 1,
             root: { id: "pane-1:root", kind: "leaf", paneId: "pane-1" },
           },
-          panes: [{ id: "pane-1", shellProfileId: "pwsh", cwd: null }],
+          panes: [{ id: "pane-1", shellProfileId: "pwsh", cwd: null, borderColor: "#14b8a6" }],
         },
         {
           title: "UI",
@@ -576,7 +613,7 @@ describe("AppService", () => {
             version: 1,
             root: { id: "pane-2:root", kind: "leaf", paneId: "pane-2" },
           },
-          panes: [{ id: "pane-2", shellProfileId: "pwsh", cwd: null }],
+          panes: [{ id: "pane-2", shellProfileId: "pwsh", cwd: null, borderColor: null }],
         },
       ],
     });
@@ -591,6 +628,8 @@ describe("AppService", () => {
     expect(appended.tabs[1]!.title).toBe("API");
     expect(appended.tabs[2]!.title).toBe("UI");
     expect(appended.tabs[0]!.id).toBe(originalTabId);
+    expect(appended.tabs[1]!.sessions[0]!.borderColor).toBe("#14b8a6");
+    expect(appended.tabs[2]!.sessions[0]!.borderColor).toBeNull();
 
     const replaced = await service.applyTemplate({
       projectId: workspace.project.id,

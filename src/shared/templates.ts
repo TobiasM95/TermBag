@@ -9,6 +9,7 @@ import type {
   TemplateTab,
   TemplateTabLayout,
 } from "./types.js";
+import { normalizeSessionBorderColor } from "./session-colors.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -136,6 +137,9 @@ function validateTemplateTab(value: unknown, label: string): TemplateTab {
         `${label} pane ${index + 1} shell profile`,
       ),
       cwd: normalizedCwd,
+      borderColor: normalizeSessionBorderColor(
+        typeof pane.borderColor === "string" ? pane.borderColor : null,
+      ),
     };
   });
 

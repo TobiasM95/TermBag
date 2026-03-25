@@ -11,6 +11,7 @@ import type {
   RenameTemplateInput,
   RenameTabInput,
   SaveProjectAsTemplateInput,
+  SetSessionBorderColorInput,
   SetFocusedSessionInput,
   SessionRuntimeSummary,
   ShellProfileAvailability,
@@ -54,6 +55,7 @@ interface AppState {
   closeTab(tabId: string): Promise<void>;
   applyLayoutPreset(input: ApplyLayoutPresetInput): Promise<void>;
   setFocusedSession(input: SetFocusedSessionInput): Promise<void>;
+  setSessionBorderColor(input: SetSessionBorderColorInput): Promise<void>;
   loadHistory(sessionId: string): Promise<void>;
   applyTerminalEvent(event: TerminalEvent): void;
   setSessionRuntime(runtime: SessionRuntimeSummary): void;
@@ -617,6 +619,31 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (error) {
       set({
         error: error instanceof Error ? error.message : "Failed to focus terminal pane.",
+      });
+    }
+  },
+
+  async setSessionBorderColor(input: SetSessionBorderColorInput) {
+    set({ loading: true, error: null });
+    try {
+      const workspace = applyPreferredSelectedTab(
+        await window.termbag.setSessionBorderColor(input),
+        getStoredLastActiveTabs(),
+      );
+      set((state) => ({
+        loading: false,
+        workspaces: mergeWorkspace(state.workspaces, workspace),
+        projects: upsertProject(state.projects, workspace.project),
+        sessionRuntimes: mergeSessionRuntimes(
+          state.sessionRuntimes,
+          workspace,
+          state.workspaces[workspace.project.id],
+        ),
+      }));
+    } catch (error) {
+      set({
+        loading: false,
+        error: error instanceof Error ? error.message : "Failed to update pane border color.",
       });
     }
   },

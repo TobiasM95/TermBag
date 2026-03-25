@@ -6,6 +6,7 @@ import {
   applyInputToTrackingState,
   buildPowerShellBootstrapScript,
   buildTerminalTranscript,
+  consumeBootstrapReplayPrefix,
   countSnapshotBytes,
   inferCmdCwdFromSubmittedCommand,
   inferCmdPromptCwdFromOutput,
@@ -164,6 +165,24 @@ describe("PowerShell integration parsing", () => {
   it("preserves standalone cursor visibility controls outside startup cleanup", () => {
     expect(stripInitialTerminalNoise("\u001b[?25lready")).toBe("\u001b[?25lready");
     expect(stripInitialTerminalNoise("\u001b[?25hready")).toBe("\u001b[?25hready");
+  });
+
+  it("suppresses bootstrap transcript output that already exists in restored state", () => {
+    expect(
+      consumeBootstrapReplayPrefix("line-1\r\nline-2\r\n", "line-1\r\nline-2\r\nprompt>"),
+    ).toEqual({
+      remainingReplay: "",
+      visibleChunk: "prompt>",
+    });
+  });
+
+  it("stops suppressing bootstrap replay once the output no longer matches", () => {
+    expect(
+      consumeBootstrapReplayPrefix("line-1\r\nline-2\r\n", "line-1\r\noops"),
+    ).toEqual({
+      remainingReplay: "",
+      visibleChunk: "oops",
+    });
   });
 });
 

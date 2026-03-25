@@ -11,6 +11,7 @@ import type {
   HistoryQuery,
   HydratedSession,
   ProjectWorkspace,
+  SetSessionBorderColorInput,
   RenameTemplateInput,
   RenameTabInput,
   RecallHistoryInput,
@@ -91,6 +92,8 @@ const api: TermBagApi = {
     ipcRenderer.invoke(IPC_CHANNELS.applyLayoutPreset, input) as Promise<ProjectWorkspace>,
   setFocusedSession: (input: SetFocusedSessionInput) =>
     ipcRenderer.invoke(IPC_CHANNELS.setFocusedSession, input) as Promise<ProjectWorkspace>,
+  setSessionBorderColor: (input: SetSessionBorderColorInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.setSessionBorderColor, input) as Promise<ProjectWorkspace>,
   activateSession: (input: ActivateSessionInput) =>
     ipcRenderer.invoke(IPC_CHANNELS.activateSession, input) as Promise<HydratedSession>,
   resizeSession: (input: ResizeSessionInput) => {

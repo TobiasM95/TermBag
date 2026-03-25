@@ -76,6 +76,7 @@ export interface TemplatePane {
   id: string;
   shellProfileId: string;
   cwd: TemplatePathReference | null;
+  borderColor?: string | null;
 }
 
 export interface TemplateTab {
@@ -135,6 +136,7 @@ export interface SavedTerminalSession {
   tabId: string;
   shellProfileId: string;
   lastKnownCwd: string | null;
+  borderColor: string | null;
   sessionOrder: number;
   createdAt: string;
   updatedAt: string;
@@ -144,6 +146,7 @@ export interface TerminalSnapshot {
   sessionId: string;
   snapshotFormat: SnapshotFormat;
   transcriptText: string;
+  serializedState: string;
   byteCount: number;
   updatedAt: string;
 }
@@ -250,6 +253,11 @@ export interface SetFocusedSessionInput {
   sessionId: string;
 }
 
+export interface SetSessionBorderColorInput {
+  sessionId: string;
+  borderColor: string | null;
+}
+
 export interface ActivateSessionInput {
   sessionId: string;
   cols: number;
@@ -338,6 +346,7 @@ export interface TermBagApi {
   closeTab(tabId: string): Promise<ProjectWorkspace>;
   applyLayoutPreset(input: ApplyLayoutPresetInput): Promise<ProjectWorkspace>;
   setFocusedSession(input: SetFocusedSessionInput): Promise<ProjectWorkspace>;
+  setSessionBorderColor(input: SetSessionBorderColorInput): Promise<ProjectWorkspace>;
   activateSession(input: ActivateSessionInput): Promise<HydratedSession>;
   resizeSession(input: ResizeSessionInput): void;
   writeToSession(sessionId: string, data: string): void;

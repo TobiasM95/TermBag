@@ -19,6 +19,7 @@ export const IPC_CHANNELS = {
   closeTab: "tabs:close",
   applyLayoutPreset: "tabs:applyLayoutPreset",
   setFocusedSession: "tabs:setFocusedSession",
+  setSessionBorderColor: "sessions:setBorderColor",
   activateSession: "sessions:activate",
   resizeSession: "sessions:resize",
   writeToSession: "sessions:write",

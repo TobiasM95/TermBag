@@ -19,6 +19,7 @@ import type {
   CreateProjectInput,
   CreateTabInput,
   HistoryQuery,
+  SetSessionBorderColorInput,
   RenameTemplateInput,
   RenameTabInput,
   RecallHistoryInput,
@@ -59,6 +60,7 @@ interface AppServiceContract {
   closeTab(tabId: string): unknown;
   applyLayoutPreset(input: ApplyLayoutPresetInput): unknown;
   setFocusedSession(input: SetFocusedSessionInput): unknown;
+  setSessionBorderColor(input: SetSessionBorderColorInput): unknown;
   activateSession(input: ActivateSessionInput): unknown;
   resizeSession(sessionId: string, cols: number, rows: number): void;
   writeToSession(sessionId: string, data: string): void;
@@ -277,6 +279,10 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle(IPC_CHANNELS.setFocusedSession, (_event, input: SetFocusedSessionInput) =>
     appService!.setFocusedSession(input),
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.setSessionBorderColor,
+    (_event, input: SetSessionBorderColorInput) => appService!.setSessionBorderColor(input),
   );
   ipcMain.handle(IPC_CHANNELS.activateSession, (_event, input: ActivateSessionInput) =>
     appService!.activateSession(input),

@@ -15,6 +15,7 @@ import { createTerminalPerformanceMeter } from "../../shared/terminal-performanc
 import { isSameTerminalSize } from "../../shared/terminal-size.js";
 import {
   applyInputToTrackingState,
+  consumeBootstrapReplayPrefix,
   inferCmdCwdFromSubmittedCommand,
   inferCmdPromptCwdFromOutput,
   INITIAL_INPUT_TRACKING_STATE,
@@ -61,6 +62,8 @@ interface RuntimeSession {
   currentInputBuffer: string;
   inputCursorIndex: number;
   pendingIntegrationHistoryCapture: boolean;
+  lastRenderedPromptPrefix: string | null;
+  pendingBootstrapReplayText: string;
   alternateScreenActive: boolean;
   suppressInitialRenderNoise: boolean;
   currentCwd: string | null;
@@ -178,6 +181,7 @@ export class PtyManager {
         bootstrapCleanupPaths: bootstrapAssets?.cleanupPaths ?? [],
       },
     );
+    await this.restoreRuntimeSnapshot(runtime, persistedSnapshot);
     this.runtimes.set(session.id, runtime);
 
     try {
@@ -405,6 +409,8 @@ export class PtyManager {
       currentInputBuffer: INITIAL_INPUT_TRACKING_STATE.currentInputBuffer,
       inputCursorIndex: INITIAL_INPUT_TRACKING_STATE.inputCursorIndex,
       pendingIntegrationHistoryCapture: false,
+      lastRenderedPromptPrefix: null,
+      pendingBootstrapReplayText: "",
       alternateScreenActive: false,
       suppressInitialRenderNoise: true,
       currentCwd: session.lastKnownCwd,
@@ -515,6 +521,7 @@ export class PtyManager {
     runtime.currentInputBuffer = "";
     runtime.inputCursorIndex = 0;
     runtime.pendingIntegrationHistoryCapture = false;
+    runtime.lastRenderedPromptPrefix = null;
     runtime.snapshotDirty = true;
     await this.flushSnapshot(runtime);
     this.emitStatusIfChanged(runtime);
@@ -532,9 +539,15 @@ export class PtyManager {
     }
 
     const parsed = parseIntegrationChunk(chunk);
-    const displayData = runtime.suppressInitialRenderNoise
+    const initialDisplayData = runtime.suppressInitialRenderNoise
       ? stripInitialTerminalNoise(parsed.sanitized)
       : parsed.sanitized;
+    const bootstrapReplay = consumeBootstrapReplayPrefix(
+      runtime.pendingBootstrapReplayText,
+      initialDisplayData,
+    );
+    runtime.pendingBootstrapReplayText = bootstrapReplay.remainingReplay;
+    const displayData = bootstrapReplay.visibleChunk;
 
     if (parsed.enteredAlternateScreen) {
       runtime.alternateScreenActive = true;
@@ -542,6 +555,7 @@ export class PtyManager {
       runtime.currentInputBuffer = "";
       runtime.inputCursorIndex = 0;
       runtime.pendingIntegrationHistoryCapture = false;
+      runtime.lastRenderedPromptPrefix = null;
     }
     if (parsed.exitedAlternateScreen) {
       runtime.alternateScreenActive = false;
@@ -573,12 +587,15 @@ export class PtyManager {
 
     if (parsed.promptSignals.length > 0) {
       runtime.pendingIntegrationHistoryCapture = false;
+      runtime.lastRenderedPromptPrefix = this.extractLastRenderedLine(displayData);
       const promptReady = markPromptReady();
       runtime.promptTrackingValid = promptReady.promptTrackingValid;
       runtime.currentInputBuffer = promptReady.currentInputBuffer;
       runtime.inputCursorIndex = promptReady.inputCursorIndex;
     } else if (shellProfile.id === "cmd" && /[A-Za-z]:\\.*>\s*$/.test(displayData.trimEnd())) {
       runtime.pendingIntegrationHistoryCapture = false;
+      runtime.lastRenderedPromptPrefix =
+        this.extractLastRenderedLine(displayData) ?? runtime.lastRenderedPromptPrefix;
       const promptReady = markPromptReady();
       runtime.promptTrackingValid = promptReady.promptTrackingValid;
       runtime.currentInputBuffer = promptReady.currentInputBuffer;
@@ -644,10 +661,6 @@ export class PtyManager {
   }
 
   private inferSubmittedCommandFromTerminal(runtime: RuntimeSession): string | null {
-    if (runtime.shellProfileId !== "cmd") {
-      return null;
-    }
-
     const activeBuffer = (runtime.headless.buffer as {
       active?: typeof runtime.headless.buffer.normal & {
         baseY: number;
@@ -680,6 +693,13 @@ export class PtyManager {
       return null;
     }
 
+    if (
+      runtime.lastRenderedPromptPrefix &&
+      promptLine.startsWith(runtime.lastRenderedPromptPrefix)
+    ) {
+      return promptLine.slice(runtime.lastRenderedPromptPrefix.length);
+    }
+
     const cwdPrefix = runtime.currentCwd ? `${runtime.currentCwd}>` : null;
     if (cwdPrefix && promptLine.startsWith(cwdPrefix)) {
       return promptLine.slice(cwdPrefix.length);
@@ -687,6 +707,40 @@ export class PtyManager {
 
     const genericPromptMatch = /^[A-Za-z]:\\.*>(.*)$/.exec(promptLine);
     return genericPromptMatch?.[1] ?? null;
+  }
+
+  private extractLastRenderedLine(data: string): string | null {
+    if (!data) {
+      return null;
+    }
+
+    const normalized = data.replace(/\r/g, "");
+    const lines = normalized.split("\n");
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const line = lines[index];
+      if (line && line.length > 0) {
+        return line;
+      }
+    }
+
+    return null;
+  }
+
+  private async restoreRuntimeSnapshot(
+    runtime: RuntimeSession,
+    snapshot: {
+      transcriptText: string;
+      serializedState: string;
+    } | null,
+  ): Promise<void> {
+    if (!snapshot?.serializedState) {
+      runtime.pendingBootstrapReplayText = "";
+      return;
+    }
+
+    await writeTerminalData(runtime.headless, snapshot.serializedState);
+    runtime.lastSerializedByteCount = countSnapshotBytes(snapshot.serializedState);
+    runtime.pendingBootstrapReplayText = snapshot.transcriptText;
   }
 
   private recordHistoryEntry(
@@ -729,12 +783,13 @@ export class PtyManager {
 
     const startedAt = performance.now();
     const transcriptText = buildTerminalTranscript(runtime.headless.buffer.normal);
-    runtime.lastSerializedByteCount = countSnapshotBytes(transcriptText);
+    const serializedState = serializeTerminal(runtime);
     runtime.snapshotDirty = false;
     this.database.upsertSnapshot({
       sessionId: runtime.sessionId,
       snapshotFormat: SNAPSHOT_FORMAT,
       transcriptText,
+      serializedState,
       byteCount: runtime.lastSerializedByteCount,
     });
     snapshotFlushPerformance.record({
