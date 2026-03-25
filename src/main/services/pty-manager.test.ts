@@ -316,6 +316,62 @@ describe("PtyManager snapshot restore", () => {
 
     expect(replay.serializedState).toContain("\u001b[31m");
     expect(replay.viewportOffsetFromBottom).toBe(0);
-    expect(runtime.pendingBootstrapReplayText).toBe("");
+    expect(runtime.pendingBootstrapReplayText).toBe(snapshot.transcriptText);
+  });
+
+  it("keeps the restored ANSI snapshot when cmd replay and prompt arrive in one chunk", async () => {
+    const { manager, runtime, session, shellProfile, tab } = createRuntimeHarness({
+      shellProfileId: "cmd",
+      supportsIntegration: false,
+    });
+
+    await writeHeadless(runtime, "\u001b[31mred\u001b[0m\r\nC:\\Work\\Repo>");
+    runtime.pendingBootstrapReplayText = "red\r\nC:\\Work\\Repo>\r\n";
+    runtime.suppressBootstrapOutputUntilPrompt = true;
+    runtime.suppressInitialRenderNoise = true;
+
+    await (manager as any).handleData(
+      tab,
+      session,
+      shellProfile,
+      runtime,
+      "red\r\nC:\\Work\\Repo>\nC:\\Work\\Repo> ",
+    );
+
+    const replay = await (manager as any).captureReplayState(runtime);
+
+    expect(runtime.pendingOutputData).toBe("");
+    expect(runtime.suppressBootstrapOutputUntilPrompt).toBe(false);
+    expect(runtime.promptTrackingValid).toBe(true);
+    expect(runtime.currentCwd).toBe("C:\\Work\\Repo");
+    expect(replay.serializedState).toContain("\u001b[31m");
+  });
+
+  it("keeps the restored ANSI snapshot when PowerShell replay and prompt arrive in one chunk", async () => {
+    const { manager, runtime, session, shellProfile, tab } = createRuntimeHarness({
+      shellProfileId: "pwsh",
+      supportsIntegration: true,
+    });
+
+    await writeHeadless(runtime, "\u001b[31mred\u001b[0m\r\nPS C:\\Work\\Repo> ");
+    runtime.pendingBootstrapReplayText = "red\r\nPS C:\\Work\\Repo> \r\n";
+    runtime.suppressBootstrapOutputUntilPrompt = true;
+    runtime.suppressInitialRenderNoise = true;
+
+    await (manager as any).handleData(
+      tab,
+      session,
+      shellProfile,
+      runtime,
+      "red\nPS C:\\Work\\Repo> \r\n\u001b]633;TermBagCwd=C%3A%5CWork%5CRepo\u0007\u001b]633;TermBagPrompt=ready\u0007PS C:\\Work\\Repo> ",
+    );
+
+    const replay = await (manager as any).captureReplayState(runtime);
+
+    expect(runtime.pendingOutputData).toBe("");
+    expect(runtime.suppressBootstrapOutputUntilPrompt).toBe(false);
+    expect(runtime.promptTrackingValid).toBe(true);
+    expect(runtime.currentCwd).toBe("C:\\Work\\Repo");
+    expect(replay.serializedState).toContain("\u001b[31m");
   });
 });

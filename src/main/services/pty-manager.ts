@@ -64,6 +64,7 @@ interface RuntimeSession {
   pendingIntegrationHistoryCapture: boolean;
   lastRenderedPromptPrefix: string | null;
   pendingBootstrapReplayText: string;
+  suppressBootstrapOutputUntilPrompt: boolean;
   alternateScreenActive: boolean;
   suppressInitialRenderNoise: boolean;
   currentCwd: string | null;
@@ -167,8 +168,7 @@ export class PtyManager {
     const persistedSnapshot = this.database.getSnapshot(session.id);
     const shouldBootstrapTranscript =
       persistedSnapshot?.snapshotFormat === SNAPSHOT_FORMAT &&
-      Boolean(persistedSnapshot.transcriptText) &&
-      !persistedSnapshot.serializedState;
+      Boolean(persistedSnapshot.transcriptText);
     const bootstrapAssets =
       shouldBootstrapTranscript
         ? createShellBootstrapAssets(shellProfile, persistedSnapshot.transcriptText)
@@ -184,6 +184,9 @@ export class PtyManager {
         supportsIntegration: shellProfile.supportsIntegration,
         suppressInitialRenderNoise: Boolean(
           persistedSnapshot?.transcriptText || persistedSnapshot?.serializedState,
+        ),
+        suppressBootstrapOutputUntilPrompt: Boolean(
+          persistedSnapshot?.serializedState && shouldBootstrapTranscript,
         ),
         bootstrapCleanupPaths: bootstrapAssets?.cleanupPaths ?? [],
       },
@@ -420,6 +423,7 @@ export class PtyManager {
       pendingIntegrationHistoryCapture: false,
       lastRenderedPromptPrefix: null,
       pendingBootstrapReplayText: "",
+      suppressBootstrapOutputUntilPrompt: false,
       alternateScreenActive: false,
       suppressInitialRenderNoise: true,
       currentCwd: session.lastKnownCwd,
@@ -556,7 +560,17 @@ export class PtyManager {
       initialDisplayData,
     );
     runtime.pendingBootstrapReplayText = bootstrapReplay.remainingReplay;
-    const displayData = bootstrapReplay.visibleChunk;
+    const trackingData = bootstrapReplay.visibleChunk;
+    let displayData = trackingData;
+    const cmdPromptVisible =
+      shellProfile.id === "cmd" && /[A-Za-z]:\\.*>\s*$/.test(trackingData.trimEnd());
+    if (runtime.suppressBootstrapOutputUntilPrompt) {
+      displayData = "";
+      if (parsed.promptSignals.length > 0 || cmdPromptVisible) {
+        runtime.suppressBootstrapOutputUntilPrompt = false;
+        runtime.pendingBootstrapReplayText = "";
+      }
+    }
 
     if (parsed.enteredAlternateScreen) {
       runtime.alternateScreenActive = true;
@@ -565,6 +579,7 @@ export class PtyManager {
       runtime.inputCursorIndex = 0;
       runtime.pendingIntegrationHistoryCapture = false;
       runtime.lastRenderedPromptPrefix = null;
+      runtime.suppressBootstrapOutputUntilPrompt = false;
     }
     if (parsed.exitedAlternateScreen) {
       runtime.alternateScreenActive = false;
@@ -587,7 +602,7 @@ export class PtyManager {
     }
 
     if (shellProfile.id === "cmd") {
-      const inferred = inferCmdPromptCwdFromOutput(runtime.currentCwd, displayData);
+      const inferred = inferCmdPromptCwdFromOutput(runtime.currentCwd, trackingData);
       if (inferred && inferred !== runtime.currentCwd) {
         runtime.currentCwd = inferred;
         this.persistCwdAndTitle(tab, session, shellProfile, inferred);
@@ -596,15 +611,15 @@ export class PtyManager {
 
     if (parsed.promptSignals.length > 0) {
       runtime.pendingIntegrationHistoryCapture = false;
-      runtime.lastRenderedPromptPrefix = this.extractLastRenderedLine(displayData);
+      runtime.lastRenderedPromptPrefix = this.extractLastRenderedLine(trackingData);
       const promptReady = markPromptReady();
       runtime.promptTrackingValid = promptReady.promptTrackingValid;
       runtime.currentInputBuffer = promptReady.currentInputBuffer;
       runtime.inputCursorIndex = promptReady.inputCursorIndex;
-    } else if (shellProfile.id === "cmd" && /[A-Za-z]:\\.*>\s*$/.test(displayData.trimEnd())) {
+    } else if (cmdPromptVisible) {
       runtime.pendingIntegrationHistoryCapture = false;
       runtime.lastRenderedPromptPrefix =
-        this.extractLastRenderedLine(displayData) ?? runtime.lastRenderedPromptPrefix;
+        this.extractLastRenderedLine(trackingData) ?? runtime.lastRenderedPromptPrefix;
       const promptReady = markPromptReady();
       runtime.promptTrackingValid = promptReady.promptTrackingValid;
       runtime.currentInputBuffer = promptReady.currentInputBuffer;
@@ -613,7 +628,12 @@ export class PtyManager {
 
     if (
       runtime.suppressInitialRenderNoise &&
-      (parsed.promptSignals.length > 0 || parsed.cwdSignals.length > 0 || /\S/.test(displayData))
+      (
+        parsed.promptSignals.length > 0 ||
+        cmdPromptVisible ||
+        parsed.cwdSignals.length > 0 ||
+        /\S/.test(displayData)
+      )
     ) {
       runtime.suppressInitialRenderNoise = false;
     }
@@ -749,8 +769,11 @@ export class PtyManager {
     }
 
     await writeTerminalData(runtime.headless, snapshot.serializedState);
+    if (snapshot.transcriptText && runtime.headless.buffer.active.cursorX !== 0) {
+      await writeTerminalData(runtime.headless, "\r\n");
+    }
     runtime.lastSerializedByteCount = countSnapshotBytes(snapshot.serializedState);
-    runtime.pendingBootstrapReplayText = "";
+    runtime.pendingBootstrapReplayText = snapshot.transcriptText;
   }
 
   private recordHistoryEntry(
