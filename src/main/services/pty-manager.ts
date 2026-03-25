@@ -148,6 +148,7 @@ export class PtyManager {
   ): Promise<{
     runtime: SessionRuntimeSummary;
     serializedState: string;
+    viewportOffsetFromBottom: number;
     replayRevision: number;
   }> {
     const existing = this.runtimes.get(session.id);
@@ -157,15 +158,19 @@ export class PtyManager {
       return {
         runtime: this.toRuntimeSummary(existing),
         serializedState: replay.serializedState,
+        viewportOffsetFromBottom: replay.viewportOffsetFromBottom,
         replayRevision: replay.replayRevision,
       };
     }
 
     const desiredCwd = this.resolveSpawnCwd(project, session);
     const persistedSnapshot = this.database.getSnapshot(session.id);
-    const bootstrapAssets =
+    const shouldBootstrapTranscript =
       persistedSnapshot?.snapshotFormat === SNAPSHOT_FORMAT &&
-      persistedSnapshot.transcriptText
+      Boolean(persistedSnapshot.transcriptText) &&
+      !persistedSnapshot.serializedState;
+    const bootstrapAssets =
+      shouldBootstrapTranscript
         ? createShellBootstrapAssets(shellProfile, persistedSnapshot.transcriptText)
         : null;
     const runtime = this.createRuntime(
@@ -177,7 +182,9 @@ export class PtyManager {
       {
         currentCwd: desiredCwd,
         supportsIntegration: shellProfile.supportsIntegration,
-        suppressInitialRenderNoise: Boolean(persistedSnapshot?.transcriptText),
+        suppressInitialRenderNoise: Boolean(
+          persistedSnapshot?.transcriptText || persistedSnapshot?.serializedState,
+        ),
         bootstrapCleanupPaths: bootstrapAssets?.cleanupPaths ?? [],
       },
     );
@@ -234,6 +241,7 @@ export class PtyManager {
     return {
       runtime: this.toRuntimeSummary(runtime),
       serializedState: replay.serializedState,
+      viewportOffsetFromBottom: replay.viewportOffsetFromBottom,
       replayRevision: replay.replayRevision,
     };
   }
@@ -340,6 +348,7 @@ export class PtyManager {
   ): Promise<{
     runtime: SessionRuntimeSummary;
     serializedState: string;
+    viewportOffsetFromBottom: number;
     replayRevision: number;
   }> {
     await this.disposeRuntime(session.id, false);
@@ -731,6 +740,7 @@ export class PtyManager {
     snapshot: {
       transcriptText: string;
       serializedState: string;
+      viewportOffsetFromBottom: number;
     } | null,
   ): Promise<void> {
     if (!snapshot?.serializedState) {
@@ -740,7 +750,7 @@ export class PtyManager {
 
     await writeTerminalData(runtime.headless, snapshot.serializedState);
     runtime.lastSerializedByteCount = countSnapshotBytes(snapshot.serializedState);
-    runtime.pendingBootstrapReplayText = snapshot.transcriptText;
+    runtime.pendingBootstrapReplayText = "";
   }
 
   private recordHistoryEntry(
@@ -784,12 +794,14 @@ export class PtyManager {
     const startedAt = performance.now();
     const transcriptText = buildTerminalTranscript(runtime.headless.buffer.normal);
     const serializedState = serializeTerminal(runtime);
+    const viewportOffsetFromBottom = this.getViewportOffsetFromBottom(runtime);
     runtime.snapshotDirty = false;
     this.database.upsertSnapshot({
       sessionId: runtime.sessionId,
       snapshotFormat: SNAPSHOT_FORMAT,
       transcriptText,
       serializedState,
+      viewportOffsetFromBottom,
       byteCount: runtime.lastSerializedByteCount,
     });
     snapshotFlushPerformance.record({
@@ -800,13 +812,20 @@ export class PtyManager {
 
   private async captureReplayState(runtime: RuntimeSession): Promise<{
     serializedState: string;
+    viewportOffsetFromBottom: number;
     replayRevision: number;
   }> {
     await this.flushPendingOutput(runtime, true);
     return this.enqueueRuntimeTask(runtime, () => ({
       serializedState: serializeTerminal(runtime),
+      viewportOffsetFromBottom: this.getViewportOffsetFromBottom(runtime),
       replayRevision: runtime.lastCommittedSequence,
     }));
+  }
+
+  private getViewportOffsetFromBottom(runtime: RuntimeSession): number {
+    const activeBuffer = runtime.headless.buffer.active;
+    return Math.max(activeBuffer.baseY - activeBuffer.viewportY, 0);
   }
 
   private resizeRuntime(runtime: RuntimeSession, cols: number, rows: number): void {

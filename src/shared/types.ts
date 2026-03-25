@@ -147,6 +147,7 @@ export interface TerminalSnapshot {
   snapshotFormat: SnapshotFormat;
   transcriptText: string;
   serializedState: string;
+  viewportOffsetFromBottom: number;
   byteCount: number;
   updatedAt: string;
 }
@@ -284,6 +285,7 @@ export interface HydratedSession {
   sessionId: string;
   runtime: SessionRuntimeSummary;
   serializedState: string;
+  viewportOffsetFromBottom: number;
   replayRevision: number;
 }
 

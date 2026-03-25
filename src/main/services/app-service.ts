@@ -394,6 +394,7 @@ export class AppService {
       sessionId: input.sessionId,
       runtime: activated.runtime,
       serializedState: activated.serializedState,
+      viewportOffsetFromBottom: activated.viewportOffsetFromBottom,
       replayRevision: activated.replayRevision,
     };
   }
@@ -423,6 +424,7 @@ export class AppService {
       sessionId: session.id,
       runtime: restarted.runtime,
       serializedState: restarted.serializedState,
+      viewportOffsetFromBottom: restarted.viewportOffsetFromBottom,
       replayRevision: restarted.replayRevision,
     };
   }

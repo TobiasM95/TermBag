@@ -49,6 +49,7 @@ class FakeDatabaseService {
     snapshotFormat: string;
     transcriptText: string;
     serializedState: string;
+    viewportOffsetFromBottom: number;
     byteCount: number;
   }): TerminalSnapshot {
     this.snapshot = {
@@ -56,6 +57,7 @@ class FakeDatabaseService {
       snapshotFormat: params.snapshotFormat as TerminalSnapshot["snapshotFormat"],
       transcriptText: params.transcriptText,
       serializedState: params.serializedState,
+      viewportOffsetFromBottom: params.viewportOffsetFromBottom,
       byteCount: params.byteCount,
       updatedAt: new Date().toISOString(),
     };
@@ -292,6 +294,7 @@ describe("PtyManager snapshot restore", () => {
 
     expect(database.snapshot?.transcriptText).toBe("red\r\nprompt>\r\n");
     expect(database.snapshot?.serializedState).toContain("\u001b[31m");
+    expect(database.snapshot?.viewportOffsetFromBottom).toBe(0);
     expect(database.snapshot?.byteCount).toBeGreaterThan(database.snapshot?.transcriptText.length ?? 0);
   });
 
@@ -302,6 +305,7 @@ describe("PtyManager snapshot restore", () => {
       snapshotFormat: "plain-transcript-v1",
       transcriptText: "red\r\nprompt>\r\n",
       serializedState: "\u001b[31mred\u001b[0m\r\nprompt>",
+      viewportOffsetFromBottom: 0,
       byteCount: 24,
       updatedAt: new Date().toISOString(),
     };
@@ -310,6 +314,7 @@ describe("PtyManager snapshot restore", () => {
     const replay = await (manager as any).captureReplayState(runtime);
 
     expect(replay.serializedState).toContain("\u001b[31m");
-    expect(runtime.pendingBootstrapReplayText).toBe(snapshot.transcriptText);
+    expect(replay.viewportOffsetFromBottom).toBe(0);
+    expect(runtime.pendingBootstrapReplayText).toBe("");
   });
 });

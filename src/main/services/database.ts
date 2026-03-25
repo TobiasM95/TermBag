@@ -51,6 +51,7 @@ interface SnapshotParams {
   snapshotFormat: string;
   transcriptText: string;
   serializedState: string;
+  viewportOffsetFromBottom: number;
   byteCount: number;
 }
 
@@ -221,6 +222,7 @@ function mapSnapshot(row: Record<string, unknown>): TerminalSnapshot {
     snapshotFormat: String(row.snapshot_format) as TerminalSnapshot["snapshotFormat"],
     transcriptText: String(row.transcript_text),
     serializedState: row.serialized_state ? String(row.serialized_state) : "",
+    viewportOffsetFromBottom: Number(row.viewport_offset_from_bottom ?? 0),
     byteCount: Number(row.byte_count),
     updatedAt: String(row.updated_at),
   };
@@ -548,6 +550,25 @@ export class DatabaseService {
         this.db
           .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
           .run("012_session_border_color", nowIso());
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
+
+    if (!existing.has("013_snapshot_viewport_offset")) {
+      this.db.exec("BEGIN");
+      try {
+        const snapshotColumns = new Set(this.getTableColumns("terminal_snapshots"));
+        if (!snapshotColumns.has("viewport_offset_from_bottom")) {
+          this.db.exec(
+            "ALTER TABLE terminal_snapshots ADD COLUMN viewport_offset_from_bottom INTEGER NOT NULL DEFAULT 0",
+          );
+        }
+        this.db
+          .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
+          .run("013_snapshot_viewport_offset", nowIso());
         this.db.exec("COMMIT");
       } catch (error) {
         this.db.exec("ROLLBACK");
@@ -1229,7 +1250,8 @@ export class DatabaseService {
   getSnapshot(sessionId: string): TerminalSnapshot | null {
     const row = this.db
       .prepare(
-        `SELECT session_id, snapshot_format, transcript_text, serialized_state, byte_count, updated_at
+        `SELECT session_id, snapshot_format, transcript_text, serialized_state,
+                viewport_offset_from_bottom, byte_count, updated_at
          FROM terminal_snapshots
          WHERE session_id = ?`,
       )
@@ -1242,12 +1264,14 @@ export class DatabaseService {
     this.db
       .prepare(
         `INSERT INTO terminal_snapshots (
-          session_id, snapshot_format, transcript_text, serialized_state, byte_count, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
+          session_id, snapshot_format, transcript_text, serialized_state,
+          viewport_offset_from_bottom, byte_count, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(session_id) DO UPDATE SET
           snapshot_format = excluded.snapshot_format,
           transcript_text = excluded.transcript_text,
           serialized_state = excluded.serialized_state,
+          viewport_offset_from_bottom = excluded.viewport_offset_from_bottom,
           byte_count = excluded.byte_count,
           updated_at = excluded.updated_at`,
       )
@@ -1256,6 +1280,7 @@ export class DatabaseService {
         params.snapshotFormat,
         params.transcriptText,
         params.serializedState,
+        params.viewportOffsetFromBottom,
         params.byteCount,
         timestamp,
       );
@@ -1265,7 +1290,8 @@ export class DatabaseService {
   listSnapshotsForProject(projectId: string): TerminalSnapshot[] {
     const rows = this.db
       .prepare(
-        `SELECT s.session_id, s.snapshot_format, s.transcript_text, s.serialized_state, s.byte_count, s.updated_at
+        `SELECT s.session_id, s.snapshot_format, s.transcript_text, s.serialized_state,
+                s.viewport_offset_from_bottom, s.byte_count, s.updated_at
          FROM terminal_snapshots s
          INNER JOIN tab_shell_sessions ts ON ts.id = s.session_id
          INNER JOIN saved_terminal_tabs t ON t.id = ts.tab_id

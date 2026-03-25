@@ -65,6 +65,19 @@ function countTerminalBytes(data: string): number {
   return new TextEncoder().encode(data).byteLength;
 }
 
+function restoreViewportOffsetFromBottom(
+  terminal: Terminal,
+  viewportOffsetFromBottom: number,
+): void {
+  if (viewportOffsetFromBottom <= 0) {
+    terminal.scrollToBottom();
+    return;
+  }
+
+  const targetLine = Math.max(terminal.buffer.active.baseY - viewportOffsetFromBottom, 0);
+  terminal.scrollToLine(targetLine);
+}
+
 function isCopyShortcut(event: KeyboardEvent): boolean {
   return (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "c";
 }
@@ -333,7 +346,8 @@ export function TerminalPane({
       resizeObserver.observe(hostRef.current!);
       await nextFrame();
       scheduleResize();
-      terminal.scrollToBottom();
+      await nextFrame();
+      restoreViewportOffsetFromBottom(terminal, response.viewportOffsetFromBottom);
       if (isFocused) {
         terminal.focus();
       }
