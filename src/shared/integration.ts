@@ -106,6 +106,52 @@ export function stripInitialTerminalNoise(chunk: string): string {
     .replace(INITIAL_TERMINAL_CLEAR, "");
 }
 
+export function consumeBootstrapReplayPrefix(
+  expectedReplay: string,
+  chunk: string,
+): {
+  remainingReplay: string;
+  visibleChunk: string;
+} {
+  if (!expectedReplay || !chunk) {
+    return {
+      remainingReplay: expectedReplay,
+      visibleChunk: chunk,
+    };
+  }
+
+  const maxLength = Math.min(expectedReplay.length, chunk.length);
+  let matchedLength = 0;
+  while (
+    matchedLength < maxLength &&
+    expectedReplay.charCodeAt(matchedLength) === chunk.charCodeAt(matchedLength)
+  ) {
+    matchedLength += 1;
+  }
+
+  if (matchedLength === 0) {
+    return {
+      remainingReplay: "",
+      visibleChunk: chunk,
+    };
+  }
+
+  const remainingReplay = expectedReplay.slice(matchedLength);
+  const visibleChunk = chunk.slice(matchedLength);
+
+  if (matchedLength < maxLength && remainingReplay) {
+    return {
+      remainingReplay: "",
+      visibleChunk,
+    };
+  }
+
+  return {
+    remainingReplay,
+    visibleChunk,
+  };
+}
+
 export function inferCmdPromptCwdFromOutput(
   previousCwd: string | null,
   output: string,

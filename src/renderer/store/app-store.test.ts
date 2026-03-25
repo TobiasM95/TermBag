@@ -32,6 +32,7 @@ describe("useAppStore", () => {
         {
           id: "project-1",
           name: "Repo",
+          kuerzel: null,
           rootPath: "C:\\Work\\Repo",
           defaultShellProfileId: "pwsh",
           createdAt: "2026-03-01T12:00:00.000Z",
@@ -46,6 +47,7 @@ describe("useAppStore", () => {
           project: {
             id: "project-1",
             name: "Repo",
+            kuerzel: null,
             rootPath: "C:\\Work\\Repo",
             defaultShellProfileId: "pwsh",
             createdAt: "2026-03-01T12:00:00.000Z",
@@ -72,6 +74,7 @@ describe("useAppStore", () => {
                   tabId: "tab-1",
                   shellProfileId: "pwsh",
                   lastKnownCwd: "C:\\Work\\Repo",
+                  borderColor: null,
                   sessionOrder: 1,
                   createdAt: "2026-03-01T12:00:00.000Z",
                   updatedAt: "2026-03-01T12:00:00.000Z",
@@ -82,6 +85,7 @@ describe("useAppStore", () => {
                   tabId: "tab-1",
                   shellProfileId: "pwsh",
                   lastKnownCwd: "C:\\Work\\Repo\\src",
+                  borderColor: null,
                   sessionOrder: 2,
                   createdAt: "2026-03-01T12:00:00.000Z",
                   updatedAt: "2026-03-01T12:00:00.000Z",

@@ -6,6 +6,7 @@ import {
   applyInputToTrackingState,
   buildPowerShellBootstrapScript,
   buildTerminalTranscript,
+  consumeBootstrapReplayPrefix,
   countSnapshotBytes,
   inferCmdCwdFromSubmittedCommand,
   inferCmdPromptCwdFromOutput,
@@ -17,6 +18,7 @@ import {
 import {
   buildCmdBootstrapScript,
   buildPowerShellBootstrapFile,
+  getBootstrapTranscriptText,
 } from "../main/services/shell-bootstrap.js";
 
 const { Terminal: HeadlessTerminal } = headlessPkg;
@@ -165,9 +167,36 @@ describe("PowerShell integration parsing", () => {
     expect(stripInitialTerminalNoise("\u001b[?25lready")).toBe("\u001b[?25lready");
     expect(stripInitialTerminalNoise("\u001b[?25hready")).toBe("\u001b[?25hready");
   });
+
+  it("suppresses bootstrap transcript output that already exists in restored state", () => {
+    expect(
+      consumeBootstrapReplayPrefix("line-1\r\nline-2\r\n", "line-1\r\nline-2\r\nprompt>"),
+    ).toEqual({
+      remainingReplay: "",
+      visibleChunk: "prompt>",
+    });
+  });
+
+  it("stops suppressing bootstrap replay once the output no longer matches", () => {
+    expect(
+      consumeBootstrapReplayPrefix("line-1\r\nline-2\r\n", "line-1\r\noops"),
+    ).toEqual({
+      remainingReplay: "",
+      visibleChunk: "oops",
+    });
+  });
 });
 
 describe("shell bootstrap scripts", () => {
+  it("strips the trailing transcript newline for cmd bootstrap replay", () => {
+    expect(
+      getBootstrapTranscriptText({ id: "cmd" }, "C:\\Temp>\r\n"),
+    ).toBe("C:\\Temp>");
+    expect(
+      getBootstrapTranscriptText({ id: "pwsh" }, "PS C:\\Temp> \r\n"),
+    ).toBe("PS C:\\Temp> \r\n");
+  });
+
   it("builds a cmd bootstrap script that types the transcript file", () => {
     expect(buildCmdBootstrapScript("C:\\Temp\\history.txt")).toContain(
       'type "C:\\Temp\\history.txt"',

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import type { Project, WorkspaceSession, WorkspaceTab } from "../../shared/types";
+import { createSessionBorderPalette } from "../../shared/session-colors";
 import { getTerminalTheme } from "../../shared/terminal-config";
 import { isSameTerminalSize, type TerminalSize } from "../../shared/terminal-size";
 import { createTerminalPerformanceMeter } from "../../shared/terminal-performance";
@@ -14,6 +15,7 @@ interface TerminalPaneProps {
   themeMode: "dark" | "light";
   isFocused: boolean;
   onFocusSession(): void;
+  onOpenBorderColorModal(): void;
 }
 
 type PendingOutput = {
@@ -63,6 +65,19 @@ function countTerminalBytes(data: string): number {
   return new TextEncoder().encode(data).byteLength;
 }
 
+function restoreViewportOffsetFromBottom(
+  terminal: Terminal,
+  viewportOffsetFromBottom: number,
+): void {
+  if (viewportOffsetFromBottom <= 0) {
+    terminal.scrollToBottom();
+    return;
+  }
+
+  const targetLine = Math.max(terminal.buffer.active.baseY - viewportOffsetFromBottom, 0);
+  terminal.scrollToLine(targetLine);
+}
+
 function isCopyShortcut(event: KeyboardEvent): boolean {
   return (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "c";
 }
@@ -78,6 +93,7 @@ export function TerminalPane({
   themeMode,
   isFocused,
   onFocusSession,
+  onOpenBorderColorModal,
 }: TerminalPaneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -330,7 +346,8 @@ export function TerminalPane({
       resizeObserver.observe(hostRef.current!);
       await nextFrame();
       scheduleResize();
-      terminal.scrollToBottom();
+      await nextFrame();
+      restoreViewportOffsetFromBottom(terminal, response.viewportOffsetFromBottom);
       if (isFocused) {
         terminal.focus();
       }
@@ -373,12 +390,26 @@ export function TerminalPane({
   }, [isFocused, session.id]);
 
   const showRestart = runtime?.status === "exited" || runtime?.status === "error";
+  const borderPalette = createSessionBorderPalette(session.borderColor, themeMode);
+  const paneStyle = borderPalette
+    ? ({
+        "--terminal-pane-border": borderPalette.unfocused,
+        "--terminal-pane-border-focused": borderPalette.focused,
+      } as CSSProperties)
+    : undefined;
 
   return (
     <section
       className={`terminal-pane ${isFocused ? "terminal-pane--focused" : ""}`}
+      style={paneStyle}
       onPointerDownCapture={onFocusSession}
       onFocusCapture={onFocusSession}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onFocusSession();
+        onOpenBorderColorModal();
+      }}
     >
       {tab.rootPathMissing ? (
         <div className="terminal-state">

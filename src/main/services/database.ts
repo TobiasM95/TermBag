@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { createSingleLeafLayout } from "../../shared/layout.js";
+import { parseStoredSessionBorderColor } from "../../shared/session-colors.js";
 import { SNAPSHOT_FORMAT } from "../../shared/snapshot.js";
 import type {
   HistoryEntry,
@@ -20,6 +21,7 @@ import type {
 interface CreateProjectParams {
   id: string;
   name: string;
+  kuerzel: string | null;
   rootPath: string;
   defaultShellProfileId: string;
 }
@@ -39,6 +41,7 @@ interface CreateSessionParams {
   tabId: string;
   shellProfileId: string;
   lastKnownCwd: string | null;
+  borderColor?: string | null;
   sessionOrder: number;
   createdAt?: string;
   updatedAt?: string;
@@ -48,6 +51,8 @@ interface SnapshotParams {
   sessionId: string;
   snapshotFormat: string;
   transcriptText: string;
+  serializedState: string;
+  viewportOffsetFromBottom: number;
   byteCount: number;
 }
 
@@ -79,6 +84,7 @@ const MIGRATIONS = [
       CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
+        kuerzel TEXT,
         root_path TEXT NOT NULL,
         default_shell_profile_id TEXT NOT NULL,
         created_at TEXT NOT NULL,
@@ -145,6 +151,7 @@ function mapProject(row: Record<string, unknown>): Project {
   return {
     id: String(row.id),
     name: String(row.name),
+    kuerzel: row.kuerzel ? String(row.kuerzel) : null,
     rootPath: String(row.root_path),
     defaultShellProfileId: String(row.default_shell_profile_id),
     createdAt: String(row.created_at),
@@ -205,6 +212,7 @@ function mapSession(row: Record<string, unknown>): SavedTerminalSession {
     tabId: String(row.tab_id),
     shellProfileId: String(row.shell_profile_id),
     lastKnownCwd: row.last_known_cwd ? String(row.last_known_cwd) : null,
+    borderColor: parseStoredSessionBorderColor(row.session_border_color),
     sessionOrder: Number(row.session_order),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
@@ -216,6 +224,8 @@ function mapSnapshot(row: Record<string, unknown>): TerminalSnapshot {
     sessionId: String(row.session_id),
     snapshotFormat: String(row.snapshot_format) as TerminalSnapshot["snapshotFormat"],
     transcriptText: String(row.transcript_text),
+    serializedState: row.serialized_state ? String(row.serialized_state) : "",
+    viewportOffsetFromBottom: Number(row.viewport_offset_from_bottom ?? 0),
     byteCount: Number(row.byte_count),
     updatedAt: String(row.updated_at),
   };
@@ -513,6 +523,78 @@ export class DatabaseService {
         throw error;
       }
     }
+
+    if (!existing.has("011_snapshot_serialized_state")) {
+      this.db.exec("BEGIN");
+      try {
+        const snapshotColumns = new Set(this.getTableColumns("terminal_snapshots"));
+        if (!snapshotColumns.has("serialized_state")) {
+          this.db.exec(
+            "ALTER TABLE terminal_snapshots ADD COLUMN serialized_state TEXT NOT NULL DEFAULT ''",
+          );
+        }
+        this.db
+          .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
+          .run("011_snapshot_serialized_state", nowIso());
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
+
+    if (!existing.has("012_session_border_color")) {
+      this.db.exec("BEGIN");
+      try {
+        const sessionColumns = new Set(this.getTableColumns("tab_shell_sessions"));
+        if (!sessionColumns.has("session_border_color")) {
+          this.db.exec("ALTER TABLE tab_shell_sessions ADD COLUMN session_border_color TEXT");
+        }
+        this.db
+          .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
+          .run("012_session_border_color", nowIso());
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
+
+    if (!existing.has("013_snapshot_viewport_offset")) {
+      this.db.exec("BEGIN");
+      try {
+        const snapshotColumns = new Set(this.getTableColumns("terminal_snapshots"));
+        if (!snapshotColumns.has("viewport_offset_from_bottom")) {
+          this.db.exec(
+            "ALTER TABLE terminal_snapshots ADD COLUMN viewport_offset_from_bottom INTEGER NOT NULL DEFAULT 0",
+          );
+        }
+        this.db
+          .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
+          .run("013_snapshot_viewport_offset", nowIso());
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
+
+    if (!existing.has("014_project_kuerzel")) {
+      this.db.exec("BEGIN");
+      try {
+        const projectColumns = new Set(this.getTableColumns("projects"));
+        if (!projectColumns.has("kuerzel")) {
+          this.db.exec("ALTER TABLE projects ADD COLUMN kuerzel TEXT");
+        }
+        this.db
+          .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
+          .run("014_project_kuerzel", nowIso());
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
   }
 
   private migrateTabsToSessions(): void {
@@ -541,6 +623,7 @@ export class DatabaseService {
         tab_id TEXT NOT NULL,
         shell_profile_id TEXT NOT NULL,
         last_known_cwd TEXT,
+        session_border_color TEXT,
         session_order INTEGER NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -601,8 +684,9 @@ export class DatabaseService {
     `);
     const insertSession = this.db.prepare(`
       INSERT INTO tab_shell_sessions (
-        id, tab_id, shell_profile_id, last_known_cwd, session_order, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        id, tab_id, shell_profile_id, last_known_cwd, session_border_color, session_order,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const sessionIdsByTabId = new Map<string, string>();
@@ -630,6 +714,7 @@ export class DatabaseService {
         tabId,
         String(legacyTab.shell_profile_id),
         legacyTab.last_known_cwd ? String(legacyTab.last_known_cwd) : null,
+        null,
         1,
         String(legacyTab.created_at),
         String(legacyTab.updated_at),
@@ -774,7 +859,7 @@ export class DatabaseService {
   listProjects(): Project[] {
     const rows = this.db
       .prepare(
-        `SELECT id, name, root_path, default_shell_profile_id, created_at, updated_at
+        `SELECT id, name, kuerzel, root_path, default_shell_profile_id, created_at, updated_at
          FROM projects
          ORDER BY updated_at DESC, created_at DESC`,
       )
@@ -785,7 +870,7 @@ export class DatabaseService {
   getProject(projectId: string): Project | null {
     const row = this.db
       .prepare(
-        `SELECT id, name, root_path, default_shell_profile_id, created_at, updated_at
+        `SELECT id, name, kuerzel, root_path, default_shell_profile_id, created_at, updated_at
          FROM projects
          WHERE id = ?`,
       )
@@ -798,12 +883,13 @@ export class DatabaseService {
     this.db
       .prepare(
         `INSERT INTO projects (
-          id, name, root_path, default_shell_profile_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)`,
+          id, name, kuerzel, root_path, default_shell_profile_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         params.id,
         params.name,
+        params.kuerzel,
         params.rootPath,
         params.defaultShellProfileId,
         timestamp,
@@ -816,11 +902,12 @@ export class DatabaseService {
     this.db
       .prepare(
         `UPDATE projects
-         SET name = ?, root_path = ?, default_shell_profile_id = ?, updated_at = ?
+         SET name = ?, kuerzel = ?, root_path = ?, default_shell_profile_id = ?, updated_at = ?
          WHERE id = ?`,
       )
       .run(
         project.name,
+        project.kuerzel,
         project.rootPath,
         project.defaultShellProfileId,
         nowIso(),
@@ -930,7 +1017,8 @@ export class DatabaseService {
     const rows = this.db
       .prepare(
         `SELECT
-           id, tab_id, shell_profile_id, last_known_cwd, session_order, created_at, updated_at
+           id, tab_id, shell_profile_id, last_known_cwd, session_border_color, session_order,
+           created_at, updated_at
          FROM tab_shell_sessions
          WHERE tab_id = ?
          ORDER BY session_order ASC, created_at ASC`,
@@ -943,7 +1031,8 @@ export class DatabaseService {
     const row = this.db
       .prepare(
         `SELECT
-           id, tab_id, shell_profile_id, last_known_cwd, session_order, created_at, updated_at
+           id, tab_id, shell_profile_id, last_known_cwd, session_border_color, session_order,
+           created_at, updated_at
          FROM tab_shell_sessions
          WHERE id = ?`,
       )
@@ -997,14 +1086,16 @@ export class DatabaseService {
         this.db
           .prepare(
             `INSERT INTO tab_shell_sessions (
-              id, tab_id, shell_profile_id, last_known_cwd, session_order, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              id, tab_id, shell_profile_id, last_known_cwd, session_border_color, session_order,
+              created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             nextParams.session.id,
             nextParams.session.tabId,
             nextParams.session.shellProfileId,
             nextParams.session.lastKnownCwd,
+            nextParams.session.borderColor ?? null,
             nextParams.session.sessionOrder,
             nextParams.session.createdAt ?? timestamp,
             nextParams.session.updatedAt ?? timestamp,
@@ -1051,8 +1142,9 @@ export class DatabaseService {
 
         const insertSession = this.db.prepare(
           `INSERT INTO tab_shell_sessions (
-            id, tab_id, shell_profile_id, last_known_cwd, session_order, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            id, tab_id, shell_profile_id, last_known_cwd, session_border_color, session_order,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         );
 
         for (const session of nextParams.sessions) {
@@ -1061,6 +1153,7 @@ export class DatabaseService {
             session.tabId,
             session.shellProfileId,
             session.lastKnownCwd,
+            session.borderColor ?? null,
             session.sessionOrder,
             session.createdAt ?? timestamp,
             session.updatedAt ?? timestamp,
@@ -1084,14 +1177,16 @@ export class DatabaseService {
     this.db
       .prepare(
         `INSERT INTO tab_shell_sessions (
-          id, tab_id, shell_profile_id, last_known_cwd, session_order, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          id, tab_id, shell_profile_id, last_known_cwd, session_border_color, session_order,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         params.id,
         params.tabId,
         params.shellProfileId,
         params.lastKnownCwd,
+        params.borderColor ?? null,
         params.sessionOrder,
         params.createdAt ?? timestamp,
         params.updatedAt ?? timestamp,
@@ -1132,12 +1227,14 @@ export class DatabaseService {
     this.db
       .prepare(
         `UPDATE tab_shell_sessions
-         SET shell_profile_id = ?, last_known_cwd = ?, session_order = ?, updated_at = ?
+         SET shell_profile_id = ?, last_known_cwd = ?, session_border_color = ?,
+             session_order = ?, updated_at = ?
          WHERE id = ?`,
       )
       .run(
         session.shellProfileId,
         session.lastKnownCwd,
+        session.borderColor,
         session.sessionOrder,
         nowIso(),
         session.id,
@@ -1175,7 +1272,8 @@ export class DatabaseService {
   getSnapshot(sessionId: string): TerminalSnapshot | null {
     const row = this.db
       .prepare(
-        `SELECT session_id, snapshot_format, transcript_text, byte_count, updated_at
+        `SELECT session_id, snapshot_format, transcript_text, serialized_state,
+                viewport_offset_from_bottom, byte_count, updated_at
          FROM terminal_snapshots
          WHERE session_id = ?`,
       )
@@ -1188,11 +1286,14 @@ export class DatabaseService {
     this.db
       .prepare(
         `INSERT INTO terminal_snapshots (
-          session_id, snapshot_format, transcript_text, byte_count, updated_at
-        ) VALUES (?, ?, ?, ?, ?)
+          session_id, snapshot_format, transcript_text, serialized_state,
+          viewport_offset_from_bottom, byte_count, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(session_id) DO UPDATE SET
           snapshot_format = excluded.snapshot_format,
           transcript_text = excluded.transcript_text,
+          serialized_state = excluded.serialized_state,
+          viewport_offset_from_bottom = excluded.viewport_offset_from_bottom,
           byte_count = excluded.byte_count,
           updated_at = excluded.updated_at`,
       )
@@ -1200,6 +1301,8 @@ export class DatabaseService {
         params.sessionId,
         params.snapshotFormat,
         params.transcriptText,
+        params.serializedState,
+        params.viewportOffsetFromBottom,
         params.byteCount,
         timestamp,
       );
@@ -1209,7 +1312,8 @@ export class DatabaseService {
   listSnapshotsForProject(projectId: string): TerminalSnapshot[] {
     const rows = this.db
       .prepare(
-        `SELECT s.session_id, s.snapshot_format, s.transcript_text, s.byte_count, s.updated_at
+        `SELECT s.session_id, s.snapshot_format, s.transcript_text, s.serialized_state,
+                s.viewport_offset_from_bottom, s.byte_count, s.updated_at
          FROM terminal_snapshots s
          INNER JOIN tab_shell_sessions ts ON ts.id = s.session_id
          INNER JOIN saved_terminal_tabs t ON t.id = ts.tab_id

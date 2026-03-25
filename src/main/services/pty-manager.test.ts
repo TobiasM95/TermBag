@@ -6,12 +6,15 @@ import type {
   SavedTerminalSession,
   SavedWorkspaceTab,
   ShellProfile,
+  TerminalSnapshot,
   TerminalEvent,
 } from "../../shared/types.js";
+import { getBootstrapTranscriptText } from "./shell-bootstrap.js";
 import { PtyManager } from "./pty-manager.js";
 
 class FakeDatabaseService {
   readonly historyEntries: HistoryEntry[] = [];
+  snapshot: TerminalSnapshot | null = null;
 
   addHistoryEntry(params: Omit<HistoryEntry, "createdAt">): HistoryEntry {
     const entry: HistoryEntry = {
@@ -38,7 +41,29 @@ class FakeDatabaseService {
     return null;
   }
 
-  upsertSnapshot(): void {}
+  getSnapshot(_sessionId: string): TerminalSnapshot | null {
+    return this.snapshot;
+  }
+
+  upsertSnapshot(params: {
+    sessionId: string;
+    snapshotFormat: string;
+    transcriptText: string;
+    serializedState: string;
+    viewportOffsetFromBottom: number;
+    byteCount: number;
+  }): TerminalSnapshot {
+    this.snapshot = {
+      sessionId: params.sessionId,
+      snapshotFormat: params.snapshotFormat as TerminalSnapshot["snapshotFormat"],
+      transcriptText: params.transcriptText,
+      serializedState: params.serializedState,
+      viewportOffsetFromBottom: params.viewportOffsetFromBottom,
+      byteCount: params.byteCount,
+      updatedAt: new Date().toISOString(),
+    };
+    return this.snapshot;
+  }
 }
 
 function createRuntimeHarness(options?: {
@@ -55,6 +80,7 @@ function createRuntimeHarness(options?: {
   const project: Project = {
     id: "project-1",
     name: "Repo",
+    kuerzel: null,
     rootPath: "C:\\Work\\Repo",
     defaultShellProfileId: options?.shellProfileId ?? "pwsh",
     createdAt: new Date().toISOString(),
@@ -84,6 +110,7 @@ function createRuntimeHarness(options?: {
     tabId: tab.id,
     shellProfileId: options?.shellProfileId ?? "pwsh",
     lastKnownCwd: options?.cwd ?? "C:\\Work\\Repo",
+    borderColor: null,
     sessionOrder: 0,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -217,6 +244,27 @@ describe("PtyManager command history capture", () => {
     expect(database.historyEntries[0]?.source).toBe("integration");
   });
 
+  it("captures the visible PowerShell prompt line when shell history changed the input", async () => {
+    const { database, manager, runtime, session } = createRuntimeHarness({
+      shellProfileId: "pwsh",
+      supportsIntegration: true,
+      cwd: "C:\\Work\\Repo",
+    });
+
+    runtime.promptTrackingValid = false;
+    runtime.currentInputBuffer = "";
+    runtime.inputCursorIndex = 0;
+    runtime.lastRenderedPromptPrefix = "PS C:\\Work\\Repo> ";
+    await writeHeadless(runtime, "PS C:\\Work\\Repo> Get-ChildItem");
+
+    manager.writeToSession(session.id, "\r");
+
+    expect(database.historyEntries.map((entry) => entry.commandText)).toEqual([
+      "Get-ChildItem",
+    ]);
+    expect(database.historyEntries[0]?.source).toBe("input_capture");
+  });
+
   it("captures the visible cmd prompt line when shell history changed the input", async () => {
     const { database, manager, runtime, session } = createRuntimeHarness({
       shellProfileId: "cmd",
@@ -235,5 +283,122 @@ describe("PtyManager command history capture", () => {
       "echo from history",
     ]);
     expect(runtime.currentCwd).toBe("C:\\Work\\Repo");
+  });
+});
+
+describe("PtyManager snapshot restore", () => {
+  it("persists serialized terminal state alongside the plain transcript", async () => {
+    const { database, manager, runtime } = createRuntimeHarness();
+
+    await writeHeadless(runtime, "\u001b[31mred\u001b[0m\r\nprompt>");
+
+    (manager as any).persistSnapshotNow(runtime);
+
+    expect(database.snapshot?.transcriptText).toBe("red\r\nprompt>\r\n");
+    expect(database.snapshot?.serializedState).toContain("\u001b[31m");
+    expect(database.snapshot?.viewportOffsetFromBottom).toBe(0);
+    expect(database.snapshot?.byteCount).toBeGreaterThan(database.snapshot?.transcriptText.length ?? 0);
+  });
+
+  it("hydrates the headless terminal from persisted serialized state", async () => {
+    const { manager, runtime } = createRuntimeHarness();
+    const snapshot: TerminalSnapshot = {
+      sessionId: runtime.sessionId,
+      snapshotFormat: "plain-transcript-v1",
+      transcriptText: "red\r\nprompt>\r\n",
+      serializedState: "\u001b[31mred\u001b[0m\r\nprompt>",
+      viewportOffsetFromBottom: 0,
+      byteCount: 24,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await (manager as any).restoreRuntimeSnapshot(runtime, snapshot);
+    const replay = await (manager as any).captureReplayState(runtime);
+
+    expect(replay.serializedState).toContain("\u001b[31m");
+    expect(replay.viewportOffsetFromBottom).toBe(0);
+    expect(runtime.pendingBootstrapReplayText).toBe(snapshot.transcriptText);
+  });
+
+  it("keeps cmd restore on the prompt line without injecting an extra newline", async () => {
+    const { manager, runtime } = createRuntimeHarness({
+      shellProfileId: "cmd",
+      supportsIntegration: false,
+    });
+    const snapshot: TerminalSnapshot = {
+      sessionId: runtime.sessionId,
+      snapshotFormat: "plain-transcript-v1",
+      transcriptText: "C:\\Work\\Repo>\r\n",
+      serializedState: "C:\\Work\\Repo>",
+      viewportOffsetFromBottom: 0,
+      byteCount: 14,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await (manager as any).restoreRuntimeSnapshot(runtime, snapshot, {
+      bootstrapReplayText: getBootstrapTranscriptText({ id: "cmd" }, snapshot.transcriptText),
+      appendBootstrapAlignmentNewline: false,
+    });
+    const replay = await (manager as any).captureReplayState(runtime);
+
+    expect(runtime.pendingBootstrapReplayText).toBe("C:\\Work\\Repo>");
+    expect(replay.serializedState).toContain("C:\\Work\\Repo>");
+    expect(replay.serializedState).not.toContain("C:\\Work\\Repo>\r\n");
+  });
+
+  it("keeps the restored ANSI snapshot when cmd replay and prompt arrive in one chunk", async () => {
+    const { manager, runtime, session, shellProfile, tab } = createRuntimeHarness({
+      shellProfileId: "cmd",
+      supportsIntegration: false,
+    });
+
+    await writeHeadless(runtime, "\u001b[31mred\u001b[0m\r\nC:\\Work\\Repo>");
+    runtime.pendingBootstrapReplayText = "red\r\nC:\\Work\\Repo>\r\n";
+    runtime.suppressBootstrapOutputUntilPrompt = true;
+    runtime.suppressInitialRenderNoise = true;
+
+    await (manager as any).handleData(
+      tab,
+      session,
+      shellProfile,
+      runtime,
+      "red\r\nC:\\Work\\Repo>\nC:\\Work\\Repo> ",
+    );
+
+    const replay = await (manager as any).captureReplayState(runtime);
+
+    expect(runtime.pendingOutputData).toBe("");
+    expect(runtime.suppressBootstrapOutputUntilPrompt).toBe(false);
+    expect(runtime.promptTrackingValid).toBe(true);
+    expect(runtime.currentCwd).toBe("C:\\Work\\Repo");
+    expect(replay.serializedState).toContain("\u001b[31m");
+  });
+
+  it("keeps the restored ANSI snapshot when PowerShell replay and prompt arrive in one chunk", async () => {
+    const { manager, runtime, session, shellProfile, tab } = createRuntimeHarness({
+      shellProfileId: "pwsh",
+      supportsIntegration: true,
+    });
+
+    await writeHeadless(runtime, "\u001b[31mred\u001b[0m\r\nPS C:\\Work\\Repo> ");
+    runtime.pendingBootstrapReplayText = "red\r\nPS C:\\Work\\Repo> \r\n";
+    runtime.suppressBootstrapOutputUntilPrompt = true;
+    runtime.suppressInitialRenderNoise = true;
+
+    await (manager as any).handleData(
+      tab,
+      session,
+      shellProfile,
+      runtime,
+      "red\nPS C:\\Work\\Repo> \r\n\u001b]633;TermBagCwd=C%3A%5CWork%5CRepo\u0007\u001b]633;TermBagPrompt=ready\u0007PS C:\\Work\\Repo> ",
+    );
+
+    const replay = await (manager as any).captureReplayState(runtime);
+
+    expect(runtime.pendingOutputData).toBe("");
+    expect(runtime.suppressBootstrapOutputUntilPrompt).toBe(false);
+    expect(runtime.promptTrackingValid).toBe(true);
+    expect(runtime.currentCwd).toBe("C:\\Work\\Repo");
+    expect(replay.serializedState).toContain("\u001b[31m");
   });
 });

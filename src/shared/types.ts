@@ -5,6 +5,7 @@ export type HistorySource = "integration" | "input_capture" | "heuristic";
 export interface Project {
   id: string;
   name: string;
+  kuerzel: string | null;
   rootPath: string;
   defaultShellProfileId: string;
   createdAt: string;
@@ -76,6 +77,7 @@ export interface TemplatePane {
   id: string;
   shellProfileId: string;
   cwd: TemplatePathReference | null;
+  borderColor?: string | null;
 }
 
 export interface TemplateTab {
@@ -135,6 +137,7 @@ export interface SavedTerminalSession {
   tabId: string;
   shellProfileId: string;
   lastKnownCwd: string | null;
+  borderColor: string | null;
   sessionOrder: number;
   createdAt: string;
   updatedAt: string;
@@ -144,6 +147,8 @@ export interface TerminalSnapshot {
   sessionId: string;
   snapshotFormat: SnapshotFormat;
   transcriptText: string;
+  serializedState: string;
+  viewportOffsetFromBottom: number;
   byteCount: number;
   updatedAt: string;
 }
@@ -200,6 +205,7 @@ export interface ProjectWorkspace {
 
 export interface CreateProjectInput {
   name: string;
+  kuerzel?: string;
   rootPath: string;
   defaultShellProfileId?: string;
 }
@@ -207,6 +213,7 @@ export interface CreateProjectInput {
 export interface UpdateProjectInput {
   id: string;
   name: string;
+  kuerzel?: string;
   rootPath: string;
   defaultShellProfileId: string;
 }
@@ -250,6 +257,11 @@ export interface SetFocusedSessionInput {
   sessionId: string;
 }
 
+export interface SetSessionBorderColorInput {
+  sessionId: string;
+  borderColor: string | null;
+}
+
 export interface ActivateSessionInput {
   sessionId: string;
   cols: number;
@@ -276,6 +288,7 @@ export interface HydratedSession {
   sessionId: string;
   runtime: SessionRuntimeSummary;
   serializedState: string;
+  viewportOffsetFromBottom: number;
   replayRevision: number;
 }
 
@@ -338,6 +351,7 @@ export interface TermBagApi {
   closeTab(tabId: string): Promise<ProjectWorkspace>;
   applyLayoutPreset(input: ApplyLayoutPresetInput): Promise<ProjectWorkspace>;
   setFocusedSession(input: SetFocusedSessionInput): Promise<ProjectWorkspace>;
+  setSessionBorderColor(input: SetSessionBorderColorInput): Promise<ProjectWorkspace>;
   activateSession(input: ActivateSessionInput): Promise<HydratedSession>;
   resizeSession(input: ResizeSessionInput): void;
   writeToSession(sessionId: string, data: string): void;

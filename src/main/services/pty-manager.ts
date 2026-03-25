@@ -15,6 +15,7 @@ import { createTerminalPerformanceMeter } from "../../shared/terminal-performanc
 import { isSameTerminalSize } from "../../shared/terminal-size.js";
 import {
   applyInputToTrackingState,
+  consumeBootstrapReplayPrefix,
   inferCmdCwdFromSubmittedCommand,
   inferCmdPromptCwdFromOutput,
   INITIAL_INPUT_TRACKING_STATE,
@@ -40,6 +41,7 @@ import {
   cleanupBootstrapAssets,
   cleanupStaleBootstrapFiles,
   createShellBootstrapAssets,
+  getBootstrapTranscriptText,
 } from "./shell-bootstrap.js";
 
 const { Terminal: HeadlessTerminal } = xtermHeadlessPackage;
@@ -61,6 +63,9 @@ interface RuntimeSession {
   currentInputBuffer: string;
   inputCursorIndex: number;
   pendingIntegrationHistoryCapture: boolean;
+  lastRenderedPromptPrefix: string | null;
+  pendingBootstrapReplayText: string;
+  suppressBootstrapOutputUntilPrompt: boolean;
   alternateScreenActive: boolean;
   suppressInitialRenderNoise: boolean;
   currentCwd: string | null;
@@ -145,6 +150,7 @@ export class PtyManager {
   ): Promise<{
     runtime: SessionRuntimeSummary;
     serializedState: string;
+    viewportOffsetFromBottom: number;
     replayRevision: number;
   }> {
     const existing = this.runtimes.get(session.id);
@@ -154,16 +160,21 @@ export class PtyManager {
       return {
         runtime: this.toRuntimeSummary(existing),
         serializedState: replay.serializedState,
+        viewportOffsetFromBottom: replay.viewportOffsetFromBottom,
         replayRevision: replay.replayRevision,
       };
     }
 
     const desiredCwd = this.resolveSpawnCwd(project, session);
     const persistedSnapshot = this.database.getSnapshot(session.id);
+    const bootstrapTranscriptText =
+      persistedSnapshot?.snapshotFormat === SNAPSHOT_FORMAT
+        ? getBootstrapTranscriptText(shellProfile, persistedSnapshot.transcriptText)
+        : "";
+    const shouldBootstrapTranscript = Boolean(bootstrapTranscriptText);
     const bootstrapAssets =
-      persistedSnapshot?.snapshotFormat === SNAPSHOT_FORMAT &&
-      persistedSnapshot.transcriptText
-        ? createShellBootstrapAssets(shellProfile, persistedSnapshot.transcriptText)
+      shouldBootstrapTranscript
+        ? createShellBootstrapAssets(shellProfile, bootstrapTranscriptText)
         : null;
     const runtime = this.createRuntime(
       project.id,
@@ -174,10 +185,19 @@ export class PtyManager {
       {
         currentCwd: desiredCwd,
         supportsIntegration: shellProfile.supportsIntegration,
-        suppressInitialRenderNoise: Boolean(persistedSnapshot?.transcriptText),
+        suppressInitialRenderNoise: Boolean(
+          persistedSnapshot?.transcriptText || persistedSnapshot?.serializedState,
+        ),
+        suppressBootstrapOutputUntilPrompt: Boolean(
+          persistedSnapshot?.serializedState && shouldBootstrapTranscript,
+        ),
         bootstrapCleanupPaths: bootstrapAssets?.cleanupPaths ?? [],
       },
     );
+    await this.restoreRuntimeSnapshot(runtime, persistedSnapshot, {
+      bootstrapReplayText: bootstrapTranscriptText,
+      appendBootstrapAlignmentNewline: shellProfile.id !== "cmd",
+    });
     this.runtimes.set(session.id, runtime);
 
     try {
@@ -230,6 +250,7 @@ export class PtyManager {
     return {
       runtime: this.toRuntimeSummary(runtime),
       serializedState: replay.serializedState,
+      viewportOffsetFromBottom: replay.viewportOffsetFromBottom,
       replayRevision: replay.replayRevision,
     };
   }
@@ -336,6 +357,7 @@ export class PtyManager {
   ): Promise<{
     runtime: SessionRuntimeSummary;
     serializedState: string;
+    viewportOffsetFromBottom: number;
     replayRevision: number;
   }> {
     await this.disposeRuntime(session.id, false);
@@ -405,6 +427,9 @@ export class PtyManager {
       currentInputBuffer: INITIAL_INPUT_TRACKING_STATE.currentInputBuffer,
       inputCursorIndex: INITIAL_INPUT_TRACKING_STATE.inputCursorIndex,
       pendingIntegrationHistoryCapture: false,
+      lastRenderedPromptPrefix: null,
+      pendingBootstrapReplayText: "",
+      suppressBootstrapOutputUntilPrompt: false,
       alternateScreenActive: false,
       suppressInitialRenderNoise: true,
       currentCwd: session.lastKnownCwd,
@@ -515,6 +540,7 @@ export class PtyManager {
     runtime.currentInputBuffer = "";
     runtime.inputCursorIndex = 0;
     runtime.pendingIntegrationHistoryCapture = false;
+    runtime.lastRenderedPromptPrefix = null;
     runtime.snapshotDirty = true;
     await this.flushSnapshot(runtime);
     this.emitStatusIfChanged(runtime);
@@ -532,9 +558,25 @@ export class PtyManager {
     }
 
     const parsed = parseIntegrationChunk(chunk);
-    const displayData = runtime.suppressInitialRenderNoise
+    const initialDisplayData = runtime.suppressInitialRenderNoise
       ? stripInitialTerminalNoise(parsed.sanitized)
       : parsed.sanitized;
+    const bootstrapReplay = consumeBootstrapReplayPrefix(
+      runtime.pendingBootstrapReplayText,
+      initialDisplayData,
+    );
+    runtime.pendingBootstrapReplayText = bootstrapReplay.remainingReplay;
+    const trackingData = bootstrapReplay.visibleChunk;
+    let displayData = trackingData;
+    const cmdPromptVisible =
+      shellProfile.id === "cmd" && /[A-Za-z]:\\.*>\s*$/.test(trackingData.trimEnd());
+    if (runtime.suppressBootstrapOutputUntilPrompt) {
+      displayData = "";
+      if (parsed.promptSignals.length > 0 || cmdPromptVisible) {
+        runtime.suppressBootstrapOutputUntilPrompt = false;
+        runtime.pendingBootstrapReplayText = "";
+      }
+    }
 
     if (parsed.enteredAlternateScreen) {
       runtime.alternateScreenActive = true;
@@ -542,6 +584,8 @@ export class PtyManager {
       runtime.currentInputBuffer = "";
       runtime.inputCursorIndex = 0;
       runtime.pendingIntegrationHistoryCapture = false;
+      runtime.lastRenderedPromptPrefix = null;
+      runtime.suppressBootstrapOutputUntilPrompt = false;
     }
     if (parsed.exitedAlternateScreen) {
       runtime.alternateScreenActive = false;
@@ -564,7 +608,7 @@ export class PtyManager {
     }
 
     if (shellProfile.id === "cmd") {
-      const inferred = inferCmdPromptCwdFromOutput(runtime.currentCwd, displayData);
+      const inferred = inferCmdPromptCwdFromOutput(runtime.currentCwd, trackingData);
       if (inferred && inferred !== runtime.currentCwd) {
         runtime.currentCwd = inferred;
         this.persistCwdAndTitle(tab, session, shellProfile, inferred);
@@ -573,12 +617,15 @@ export class PtyManager {
 
     if (parsed.promptSignals.length > 0) {
       runtime.pendingIntegrationHistoryCapture = false;
+      runtime.lastRenderedPromptPrefix = this.extractLastRenderedLine(trackingData);
       const promptReady = markPromptReady();
       runtime.promptTrackingValid = promptReady.promptTrackingValid;
       runtime.currentInputBuffer = promptReady.currentInputBuffer;
       runtime.inputCursorIndex = promptReady.inputCursorIndex;
-    } else if (shellProfile.id === "cmd" && /[A-Za-z]:\\.*>\s*$/.test(displayData.trimEnd())) {
+    } else if (cmdPromptVisible) {
       runtime.pendingIntegrationHistoryCapture = false;
+      runtime.lastRenderedPromptPrefix =
+        this.extractLastRenderedLine(trackingData) ?? runtime.lastRenderedPromptPrefix;
       const promptReady = markPromptReady();
       runtime.promptTrackingValid = promptReady.promptTrackingValid;
       runtime.currentInputBuffer = promptReady.currentInputBuffer;
@@ -587,7 +634,12 @@ export class PtyManager {
 
     if (
       runtime.suppressInitialRenderNoise &&
-      (parsed.promptSignals.length > 0 || parsed.cwdSignals.length > 0 || /\S/.test(displayData))
+      (
+        parsed.promptSignals.length > 0 ||
+        cmdPromptVisible ||
+        parsed.cwdSignals.length > 0 ||
+        /\S/.test(displayData)
+      )
     ) {
       runtime.suppressInitialRenderNoise = false;
     }
@@ -644,10 +696,6 @@ export class PtyManager {
   }
 
   private inferSubmittedCommandFromTerminal(runtime: RuntimeSession): string | null {
-    if (runtime.shellProfileId !== "cmd") {
-      return null;
-    }
-
     const activeBuffer = (runtime.headless.buffer as {
       active?: typeof runtime.headless.buffer.normal & {
         baseY: number;
@@ -680,6 +728,13 @@ export class PtyManager {
       return null;
     }
 
+    if (
+      runtime.lastRenderedPromptPrefix &&
+      promptLine.startsWith(runtime.lastRenderedPromptPrefix)
+    ) {
+      return promptLine.slice(runtime.lastRenderedPromptPrefix.length);
+    }
+
     const cwdPrefix = runtime.currentCwd ? `${runtime.currentCwd}>` : null;
     if (cwdPrefix && promptLine.startsWith(cwdPrefix)) {
       return promptLine.slice(cwdPrefix.length);
@@ -687,6 +742,52 @@ export class PtyManager {
 
     const genericPromptMatch = /^[A-Za-z]:\\.*>(.*)$/.exec(promptLine);
     return genericPromptMatch?.[1] ?? null;
+  }
+
+  private extractLastRenderedLine(data: string): string | null {
+    if (!data) {
+      return null;
+    }
+
+    const normalized = data.replace(/\r/g, "");
+    const lines = normalized.split("\n");
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const line = lines[index];
+      if (line && line.length > 0) {
+        return line;
+      }
+    }
+
+    return null;
+  }
+
+  private async restoreRuntimeSnapshot(
+    runtime: RuntimeSession,
+    snapshot: {
+      transcriptText: string;
+      serializedState: string;
+      viewportOffsetFromBottom: number;
+    } | null,
+    options?: {
+      bootstrapReplayText?: string;
+      appendBootstrapAlignmentNewline?: boolean;
+    },
+  ): Promise<void> {
+    if (!snapshot?.serializedState) {
+      runtime.pendingBootstrapReplayText = "";
+      return;
+    }
+
+    await writeTerminalData(runtime.headless, snapshot.serializedState);
+    if (
+      options?.appendBootstrapAlignmentNewline !== false &&
+      options?.bootstrapReplayText &&
+      runtime.headless.buffer.active.cursorX !== 0
+    ) {
+      await writeTerminalData(runtime.headless, "\r\n");
+    }
+    runtime.lastSerializedByteCount = countSnapshotBytes(snapshot.serializedState);
+    runtime.pendingBootstrapReplayText = options?.bootstrapReplayText ?? snapshot.transcriptText;
   }
 
   private recordHistoryEntry(
@@ -729,12 +830,15 @@ export class PtyManager {
 
     const startedAt = performance.now();
     const transcriptText = buildTerminalTranscript(runtime.headless.buffer.normal);
-    runtime.lastSerializedByteCount = countSnapshotBytes(transcriptText);
+    const serializedState = serializeTerminal(runtime);
+    const viewportOffsetFromBottom = this.getViewportOffsetFromBottom(runtime);
     runtime.snapshotDirty = false;
     this.database.upsertSnapshot({
       sessionId: runtime.sessionId,
       snapshotFormat: SNAPSHOT_FORMAT,
       transcriptText,
+      serializedState,
+      viewportOffsetFromBottom,
       byteCount: runtime.lastSerializedByteCount,
     });
     snapshotFlushPerformance.record({
@@ -745,13 +849,20 @@ export class PtyManager {
 
   private async captureReplayState(runtime: RuntimeSession): Promise<{
     serializedState: string;
+    viewportOffsetFromBottom: number;
     replayRevision: number;
   }> {
     await this.flushPendingOutput(runtime, true);
     return this.enqueueRuntimeTask(runtime, () => ({
       serializedState: serializeTerminal(runtime),
+      viewportOffsetFromBottom: this.getViewportOffsetFromBottom(runtime),
       replayRevision: runtime.lastCommittedSequence,
     }));
+  }
+
+  private getViewportOffsetFromBottom(runtime: RuntimeSession): number {
+    const activeBuffer = runtime.headless.buffer.active;
+    return Math.max(activeBuffer.baseY - activeBuffer.viewportY, 0);
   }
 
   private resizeRuntime(runtime: RuntimeSession, cols: number, rows: number): void {

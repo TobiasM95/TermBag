@@ -41,7 +41,8 @@ export function createShellBootstrapAssets(
   profile: ShellProfile,
   transcriptText: string,
 ): ShellBootstrapAssets | null {
-  if (!transcriptText) {
+  const bootstrapTranscriptText = getBootstrapTranscriptText(profile, transcriptText);
+  if (!bootstrapTranscriptText) {
     return null;
   }
 
@@ -54,7 +55,7 @@ export function createShellBootstrapAssets(
     `${baseName}${profile.id === "cmd" ? ".bat" : ".ps1"}`,
   );
 
-  fs.writeFileSync(transcriptPath, transcriptText, "utf8");
+  fs.writeFileSync(transcriptPath, bootstrapTranscriptText, "utf8");
   fs.writeFileSync(
     scriptPath,
     profile.id === "cmd"
@@ -68,6 +69,21 @@ export function createShellBootstrapAssets(
     scriptPath,
     cleanupPaths: [transcriptPath, scriptPath],
   };
+}
+
+export function getBootstrapTranscriptText(
+  profile: Pick<ShellProfile, "id">,
+  transcriptText: string,
+): string {
+  if (!transcriptText) {
+    return "";
+  }
+
+  if (profile.id !== "cmd") {
+    return transcriptText;
+  }
+
+  return transcriptText.replace(/(?:\r\n|\n)$/, "");
 }
 
 export function cleanupBootstrapAssets(paths: string[]): void {

@@ -9,6 +9,7 @@ import {
   getLayoutPresetLeafCount,
 } from "../../shared/layout.js";
 import { deriveTabTitle, normalizeWindowsPath } from "../../shared/paths.js";
+import { normalizeProjectKuerzel } from "../../shared/project-kuerzel.js";
 import {
   findFirstTemplatePaneId,
   mapPersistedLayoutToTemplateLayout,
@@ -17,6 +18,7 @@ import {
   serializeTemplateDocument,
   serializeTemplateLibraryDocument,
 } from "../../shared/templates.js";
+import { normalizeSessionBorderColor } from "../../shared/session-colors.js";
 import type {
   ActivateSessionInput,
   ApplyTemplateInput,
@@ -34,6 +36,7 @@ import type {
   SaveProjectAsTemplateInput,
   SavedTerminalSession,
   SavedWorkspaceTab,
+  SetSessionBorderColorInput,
   SetFocusedSessionInput,
   ShellProfile,
   ShellProfileAvailability,
@@ -105,6 +108,7 @@ export class AppService {
     const project = this.database.createProject({
       id: crypto.randomUUID(),
       name: input.name.trim(),
+      kuerzel: normalizeProjectKuerzel(input.kuerzel),
       rootPath: normalizeWindowsPath(input.rootPath),
       defaultShellProfileId: defaultProfileId,
     });
@@ -118,6 +122,7 @@ export class AppService {
     this.database.updateProject({
       ...existing,
       name: input.name.trim(),
+      kuerzel: normalizeProjectKuerzel(input.kuerzel),
       rootPath: normalizeWindowsPath(input.rootPath),
       defaultShellProfileId: input.defaultShellProfileId,
     });
@@ -270,6 +275,7 @@ export class AppService {
         tabId,
         shellProfileId,
         lastKnownCwd: cwd,
+        borderColor: null,
         sessionOrder: 1,
       },
     });
@@ -314,6 +320,7 @@ export class AppService {
           tabId: tab.id,
           shellProfileId: sourceSession.shellProfileId,
           lastKnownCwd: sourceSession.lastKnownCwd,
+          borderColor: null,
           sessionOrder,
         });
         sessions = [...sessions, nextSession];
@@ -359,6 +366,18 @@ export class AppService {
     return this.getProjectWorkspace(tab.projectId);
   }
 
+  setSessionBorderColor(input: SetSessionBorderColorInput): ProjectWorkspace {
+    const session = this.requireSession(input.sessionId);
+    const tab = this.normalizeTabState(this.requireTab(session.tabId));
+
+    this.database.updateSession({
+      ...session,
+      borderColor: normalizeSessionBorderColor(input.borderColor),
+    });
+
+    return this.getProjectWorkspace(tab.projectId);
+  }
+
   async activateSession(input: ActivateSessionInput): Promise<HydratedSession> {
     const session = this.requireSession(input.sessionId);
     const tab = this.normalizeTabState(this.requireTab(session.tabId));
@@ -378,6 +397,7 @@ export class AppService {
       sessionId: input.sessionId,
       runtime: activated.runtime,
       serializedState: activated.serializedState,
+      viewportOffsetFromBottom: activated.viewportOffsetFromBottom,
       replayRevision: activated.replayRevision,
     };
   }
@@ -407,6 +427,7 @@ export class AppService {
       sessionId: session.id,
       runtime: restarted.runtime,
       serializedState: restarted.serializedState,
+      viewportOffsetFromBottom: restarted.viewportOffsetFromBottom,
       replayRevision: restarted.replayRevision,
     };
   }
@@ -451,6 +472,7 @@ export class AppService {
         tabId,
         shellProfileId,
         lastKnownCwd: cwd,
+        borderColor: null,
         sessionOrder: 1,
       },
     });
@@ -542,6 +564,7 @@ export class AppService {
         cwd: includeWorkingDirectories
           ? encodeTemplatePathReference(project.rootPath, session.lastKnownCwd)
           : null,
+        borderColor: session.borderColor,
       };
     });
 
@@ -571,6 +594,7 @@ export class AppService {
         tabId,
         shellProfileId: this.resolveTemplateShellProfileId(project, pane.shellProfileId),
         lastKnownCwd: resolveTemplatePathReference(project.rootPath, pane.cwd),
+        borderColor: normalizeSessionBorderColor(pane.borderColor),
         sessionOrder: index + 1,
       };
     });
