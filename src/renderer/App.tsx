@@ -305,6 +305,10 @@ function isTerminalShortcutBypassLeader(event: KeyboardEvent): boolean {
 
 function getShellLabel(shellProfileId: string): string {
   switch (shellProfileId) {
+    case "zsh":
+      return "Zsh";
+    case "bash":
+      return "Bash";
     case "pwsh":
       return "PowerShell 7";
     case "powershell":

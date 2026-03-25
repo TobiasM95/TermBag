@@ -3,7 +3,7 @@
   "version": "0.1.3",
   "private": true,
   "author": "TobiasM95",
-  "description": "Windows-first terminal workspace with lazy restore and local persistence.",
+  "description": "Desktop terminal workspace with lazy restore and local persistence.",
   "main": "dist-electron/main/index.js",
   "type": "module",
   "scripts": {
@@ -20,7 +20,9 @@
     "preview": "cross-env NODE_ENV=production electron dist-electron/main/index.js",
     "test": "vitest run",
     "package:win": "pnpm build && electron-builder --win nsis portable --publish never && node scripts/patch-windows-artifacts.mjs",
-    "package:win:dir": "pnpm build && electron-builder --win dir --publish never && node scripts/patch-windows-artifacts.mjs"
+    "package:win:dir": "pnpm build && electron-builder --win dir --publish never && node scripts/patch-windows-artifacts.mjs",
+    "package:mac": "pnpm build && electron-builder --mac dmg zip --publish never",
+    "package:mac:dir": "pnpm build && electron-builder --mac dir --publish never"
   },
   "build": {
     "appId": "com.tobiasm95.termbag",
@@ -32,6 +34,7 @@
       "dist/**/*",
       "dist-electron/**/*",
       "build/icon.ico",
+      "build/logo-tight.png",
       "package.json"
     ],
     "asarUnpack": [
@@ -54,6 +57,15 @@
             "x64"
           ]
         }
+      ]
+    },
+    "mac": {
+      "icon": "build/logo-tight.png",
+      "identity": null,
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "target": [
+        "dmg",
+        "zip"
       ]
     },
     "nsis": {

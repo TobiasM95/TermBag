@@ -1,6 +1,7 @@
 import type { SnapshotFormat } from "./snapshot.js";
 
 export type HistorySource = "integration" | "input_capture" | "heuristic";
+export type ShellPlatform = "win32" | "darwin" | "linux";
 
 export interface Project {
   id: string;
@@ -17,7 +18,7 @@ export interface ShellProfile {
   label: string;
   executable: string;
   argsJson: string;
-  platform: "win32";
+  platform: ShellPlatform;
   supportsIntegration: boolean;
   sortOrder: number;
 }

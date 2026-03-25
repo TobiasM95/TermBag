@@ -127,7 +127,8 @@ export function TerminalPane({
       convertEol: false,
       cursorBlink: true,
       customGlyphs: true,
-      fontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
+      fontFamily:
+        "'Cascadia Mono', 'SF Mono', Menlo, Monaco, 'Cascadia Code', Consolas, 'Courier New', monospace",
       fontSize: 13,
       rescaleOverlappingGlyphs: true,
       scrollback: 3000,

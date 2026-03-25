@@ -1,11 +1,19 @@
 import { execFileSync } from "node:child_process";
-import { BUILT_IN_SHELLS, DEFAULT_PROFILE_ORDER } from "../../shared/shells.js";
+import fs from "node:fs";
+import path from "node:path";
+import {
+  getBuiltInShells,
+  getDefaultProfileOrder,
+  resolveShellPlatform,
+} from "../../shared/shells.js";
 import { buildPowerShellBootstrapScript } from "../../shared/integration.js";
 import type { ShellProfile, ShellProfileAvailability } from "../../shared/types.js";
+import type { ShellBootstrapAssets } from "./shell-bootstrap.js";
 
 export interface ResolvedShellLaunch {
   executable: string;
   args: string[];
+  env?: NodeJS.ProcessEnv;
   supportsIntegration: boolean;
 }
 
@@ -13,7 +21,7 @@ export class ShellCatalog {
   private availability = new Map<string, boolean>();
 
   refreshAvailability(): ShellProfileAvailability[] {
-    const profiles = BUILT_IN_SHELLS.map((profile) => ({
+    const profiles = getBuiltInShells(resolveShellPlatform(process.platform)).map((profile) => ({
       ...profile,
       available: this.detectExecutable(profile.executable),
     }));
@@ -23,30 +31,48 @@ export class ShellCatalog {
   }
 
   resolveDefaultProfileId(): string {
-    for (const profileId of DEFAULT_PROFILE_ORDER) {
+    const defaultProfileOrder = getDefaultProfileOrder(resolveShellPlatform(process.platform));
+    for (const profileId of defaultProfileOrder) {
       if (this.availability.get(profileId)) {
         return profileId;
       }
     }
 
-    return "cmd";
+    return defaultProfileOrder[0] ?? "bash";
   }
 
-  resolveLaunch(profile: ShellProfile, bootstrapScriptPath?: string): ResolvedShellLaunch {
+  resolveLaunch(profile: ShellProfile, bootstrap?: ShellBootstrapAssets | null): ResolvedShellLaunch {
     if (profile.id === "cmd") {
       return {
         executable: profile.executable,
-        args: bootstrapScriptPath
-          ? ["/Q", "/K", bootstrapScriptPath]
+        args: bootstrap?.entryPath
+          ? ["/Q", "/K", bootstrap.entryPath]
           : ["/Q", "/K", "chcp 65001 >nul"],
         supportsIntegration: false,
       };
     }
 
+    if (profile.id === "zsh") {
+      return {
+        executable: profile.executable,
+        args: ["-il"],
+        env: bootstrap?.launchEnv,
+        supportsIntegration: true,
+      };
+    }
+
+    if (profile.id === "bash") {
+      return {
+        executable: profile.executable,
+        args: bootstrap?.entryPath ? ["--rcfile", bootstrap.entryPath, "-i"] : ["-i"],
+        supportsIntegration: true,
+      };
+    }
+
     return {
       executable: profile.executable,
-      args: bootstrapScriptPath
-        ? ["-NoExit", "-ExecutionPolicy", "Bypass", "-File", bootstrapScriptPath]
+      args: bootstrap?.entryPath
+        ? ["-NoExit", "-ExecutionPolicy", "Bypass", "-File", bootstrap.entryPath]
         : ["-NoExit", "-Command", buildPowerShellBootstrapScript()],
       supportsIntegration: true,
     };
@@ -57,8 +83,16 @@ export class ShellCatalog {
   }
 
   private detectExecutable(executable: string): boolean {
+    if (path.isAbsolute(executable)) {
+      return fs.existsSync(executable);
+    }
+
     try {
-      execFileSync("where.exe", [executable], { stdio: "ignore" });
+      execFileSync(
+        process.platform === "win32" ? "where.exe" : "which",
+        [executable],
+        { stdio: "ignore" },
+      );
       return true;
     } catch {
       return false;

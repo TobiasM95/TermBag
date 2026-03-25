@@ -201,14 +201,14 @@ export class PtyManager {
     this.runtimes.set(session.id, runtime);
 
     try {
-      const launch = this.shellCatalog.resolveLaunch(shellProfile, bootstrapAssets?.scriptPath);
+      const launch = this.shellCatalog.resolveLaunch(shellProfile, bootstrapAssets);
       const pty = spawn(launch.executable, launch.args, {
         cols: input.cols,
         rows: input.rows,
         cwd: desiredCwd,
         name: "xterm-color",
-        useConpty: true,
-        env: buildTerminalEnvironment(process.env),
+        useConpty: process.platform === "win32",
+        env: buildTerminalEnvironment(process.env, launch.env),
       });
 
       runtime.pty = pty;

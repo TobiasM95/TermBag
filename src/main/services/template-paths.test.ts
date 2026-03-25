@@ -10,7 +10,7 @@ describe("template path helpers", () => {
       encodeTemplatePathReference("C:\\Work\\Repo", "C:\\Work\\Repo\\src\\server"),
     ).toEqual({
       kind: "relative",
-      value: "src\\server",
+      value: "src/server",
     });
   });
 
@@ -30,5 +30,23 @@ describe("template path helpers", () => {
         value: "src\\server",
       }),
     ).toBe("C:\\Other\\Repo\\src\\server");
+  });
+
+  it("stores macOS descendants as portable relative references", () => {
+    expect(
+      encodeTemplatePathReference("/Users/tobi/Repo", "/Users/tobi/Repo/src/server"),
+    ).toEqual({
+      kind: "relative",
+      value: "src/server",
+    });
+  });
+
+  it("resolves Windows-authored relative references on macOS roots", () => {
+    expect(
+      resolveTemplatePathReference("/Users/tobi/Repo", {
+        kind: "relative",
+        value: "src\\server",
+      }),
+    ).toBe("/Users/tobi/Repo/src/server");
   });
 });

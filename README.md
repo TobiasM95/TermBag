@@ -1,6 +1,6 @@
 # TermBag
 
-TermBag is a Windows-first desktop app for keeping terminal work organized by project without turning the terminal into a full IDE.
+TermBag is a desktop app for keeping terminal work organized by project without turning the terminal into a full IDE.
 
 It groups tabs under projects, remembers what you were working on, restores visible history on restart, and keeps the actual shell experience front and center.
 
@@ -45,15 +45,14 @@ Phase 1 is already implemented and currently builds and tests successfully.
 
 ## Phase 1 Shell Support
 
-Built-in Windows shell profiles:
+Built-in shell profiles depend on the platform:
 
-- `pwsh`
-- `powershell.exe`
-- `cmd.exe`
+- Windows: `pwsh`, `powershell.exe`, `cmd.exe`
+- macOS: `zsh`, `bash`, `pwsh` if it is installed
 
 Behavior today:
 
-- PowerShell shells use session-local prompt and cwd integration
+- PowerShell, Zsh, and Bash use session-local prompt and cwd integration
 - `cmd.exe` uses fallback heuristics for cwd and prompt tracking
 - history restore works by printing persisted transcript history into the real fresh shell on startup
 
@@ -138,14 +137,13 @@ When a tab is already alive during the current app session, TermBag reuses the l
 
 ## Development Requirements
 
-Phase 1 is currently **Windows-first**.
-
 Recommended environment:
 
-- Windows
+- Windows or macOS
 - Node.js 22+
 - `pnpm`
-- Visual Studio 2022 Build Tools or Visual Studio 2022 with C++ support
+- Visual Studio 2022 Build Tools or Visual Studio 2022 with C++ support on Windows
+- Xcode Command Line Tools on macOS
 
 Native modules in this repo:
 
@@ -154,11 +152,10 @@ Native modules in this repo:
 
 Those must be rebuilt against Electron's ABI.
 
-Required Windows component for `node-pty`:
+Platform-specific notes:
 
-- `MSVC v143 - VS 2022 C++ x64/x86 Spectre-mitigated libs (Latest)`
-
-Without it, native rebuilds can fail with `MSB8040`.
+- Windows: install `MSVC v143 - VS 2022 C++ x64/x86 Spectre-mitigated libs (Latest)` if `node-pty` rebuilds fail with `MSB8040`
+- macOS: install the Xcode Command Line Tools before rebuilding native modules
 
 ## Running Locally
 
@@ -210,6 +207,18 @@ Create an unpacked Windows build for quick validation:
 pnpm package:win:dir
 ```
 
+Build macOS packages on a Mac:
+
+```bash
+pnpm package:mac
+```
+
+Create an unpacked macOS app directory for quick validation:
+
+```bash
+pnpm package:mac:dir
+```
+
 ## Native Module Notes
 
 If you see an error like:
@@ -231,6 +240,8 @@ Current icon assets live in `build/`:
 - `build/logo-tight.png` for the runtime/source icon
 - `build/icon.ico` for Windows packaging
 
+macOS packaging currently reuses `build/logo-tight.png`.
+
 The Electron window currently uses the PNG icon at runtime.
 
 ## Windows Packaging
@@ -248,6 +259,22 @@ Current Windows packaging settings:
 - product name: `TermBag`
 - x64 targets
 - Windows icon: `build/icon.ico`
+
+## macOS Packaging
+
+macOS packaging is also configured with `electron-builder`.
+
+Current outputs go to `release/` and include:
+
+- `.dmg`
+- `.zip`
+- unpacked app directory via `pnpm package:mac:dir`
+
+Current macOS packaging settings:
+
+- product name: `TermBag`
+- current-architecture builds on the Mac that runs the packaging command
+- packaging is unsigned by default; signing and notarization still need Apple credentials and a follow-up release setup
 
 ## Automated GitHub Release
 
@@ -267,6 +294,8 @@ The workflow builds and uploads the root `release/` artifacts, including:
 - the portable `TermBag.exe`
 - the NSIS installer
 - generated `.blockmap` files and `latest.yml`
+
+There is not yet a matching automated macOS release workflow because code signing and notarization require Apple-specific secrets and release decisions.
 
 ## Manual Smoke Test
 
@@ -310,10 +339,10 @@ For TUI validation, use a real alternate-screen app such as `vim`, `less README.
 
 ## Known Constraints
 
-- Phase 1 is Windows-first.
 - Alternate-screen applications are intentionally excluded from persisted terminal snapshots.
 - Multiline shell editing is not fully modeled.
-- `cmd.exe` tracking is heuristic-based and less precise than PowerShell integration.
+- `cmd.exe` tracking is heuristic-based and less precise than PowerShell, Zsh, or Bash integration.
+- macOS packaging is currently unsigned and not notarized.
 - There is no true shell process resurrection yet; restart restore is transcript-based.
 
 ## Roadmap Context

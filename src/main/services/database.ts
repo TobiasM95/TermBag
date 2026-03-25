@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { createSingleLeafLayout } from "../../shared/layout.js";
+import { resolveShellPlatform } from "../../shared/shells.js";
 import { parseStoredSessionBorderColor } from "../../shared/session-colors.js";
 import { SNAPSHOT_FORMAT } from "../../shared/snapshot.js";
 import type {
@@ -165,7 +166,7 @@ function mapShellProfile(row: Record<string, unknown>): ShellProfile {
     label: String(row.label),
     executable: String(row.executable),
     argsJson: String(row.args_json),
-    platform: "win32",
+    platform: resolveShellPlatform(String(row.platform ?? "win32")),
     supportsIntegration: Boolean(row.supports_integration),
     sortOrder: Number(row.sort_order),
   };

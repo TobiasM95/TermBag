@@ -56,11 +56,15 @@ export function getTerminalTheme(themeMode: "dark" | "light"): ITheme {
   return themeMode === "dark" ? DARK_TERMINAL_THEME : LIGHT_TERMINAL_THEME;
 }
 
-export function buildTerminalEnvironment(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function buildTerminalEnvironment(
+  baseEnv: NodeJS.ProcessEnv,
+  overrides: NodeJS.ProcessEnv = {},
+): NodeJS.ProcessEnv {
   return {
     ...baseEnv,
     TERM: baseEnv.TERM || "xterm-256color",
     COLORTERM: baseEnv.COLORTERM || "truecolor",
     TERM_PROGRAM: baseEnv.TERM_PROGRAM || "TermBag",
+    ...overrides,
   };
 }

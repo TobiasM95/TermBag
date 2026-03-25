@@ -16,8 +16,10 @@ import {
   stripInitialTerminalNoise,
 } from "./testable.js";
 import {
+  buildBashBootstrapRcFile,
   buildCmdBootstrapScript,
   buildPowerShellBootstrapFile,
+  buildZshBootstrapRcFile,
   getBootstrapTranscriptText,
 } from "../main/services/shell-bootstrap.js";
 
@@ -139,6 +141,16 @@ describe("PowerShell integration parsing", () => {
     expect(parsed.sanitized).toBe("");
   });
 
+  it("accepts raw integration markers from POSIX shell hooks", () => {
+    const parsed = parseIntegrationChunk(
+      "\u001b]633;TermBagCwd=/Users/tobi/Repo\u0007\u001b]633;TermBagCommand=git status\u0007",
+    );
+
+    expect(parsed.cwdSignals).toEqual(["/Users/tobi/Repo"]);
+    expect(parsed.commandSignals).toEqual(["git status"]);
+    expect(parsed.sanitized).toBe("");
+  });
+
   it("preserves generic ANSI sequences for terminal replay", () => {
     const parsed = parseIntegrationChunk("\u001b[31mred\u001b[0m");
 
@@ -211,6 +223,26 @@ describe("shell bootstrap scripts", () => {
     expect(script).toContain("function global:prompt {");
     expect(script).toContain("Set-PSReadLineOption -AddToHistoryHandler");
     expect(script).toContain("]633;TermBagCommand=");
+  });
+
+  it("builds a Bash bootstrap rc file that replays history and emits prompt markers", () => {
+    const script = buildBashBootstrapRcFile("/tmp/termbag history.txt");
+
+    expect(script).toContain("TERMBAG_TRANSCRIPT_PATH='/tmp/termbag history.txt'");
+    expect(script).toContain("trap '__termbag_preexec' DEBUG");
+    expect(script).toContain("PROMPT_COMMAND=\"__termbag_prompt_command");
+    expect(script).toContain("TermBagCwd");
+    expect(script).toContain("TermBagCommand");
+  });
+
+  it("builds a Zsh bootstrap rc file that replays history and installs hooks", () => {
+    const script = buildZshBootstrapRcFile("/tmp/termbag history.txt");
+
+    expect(script).toContain("TERMBAG_TRANSCRIPT_PATH='/tmp/termbag history.txt'");
+    expect(script).toContain("autoload -Uz add-zsh-hook");
+    expect(script).toContain("add-zsh-hook precmd termbag_precmd");
+    expect(script).toContain("add-zsh-hook preexec termbag_preexec");
+    expect(script).toContain("TermBagPrompt");
   });
 
   it("builds an inline PowerShell bootstrap script that parses when passed to -Command", () => {

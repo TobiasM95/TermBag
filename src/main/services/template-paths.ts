@@ -1,18 +1,28 @@
 import path from "node:path";
-import { normalizeWindowsPath } from "../../shared/paths.js";
+import {
+  getPathModuleForPath,
+  normalizeFilePath,
+  normalizeRelativePath,
+  toPathModuleSeparators,
+} from "../../shared/paths.js";
 import type { TemplatePathReference } from "../../shared/types.js";
 
 function normalizeRoot(projectRoot: string): string {
-  return normalizeWindowsPath(projectRoot.trim());
+  return normalizeFilePath(projectRoot.trim());
 }
 
 function normalizeCwd(cwd: string): string {
-  return normalizeWindowsPath(cwd.trim());
+  return normalizeFilePath(cwd.trim());
+}
+
+function getPathModule(projectRoot: string, cwd?: string): typeof path.win32 {
+  return getPathModuleForPath(cwd && cwd.trim() ? cwd : projectRoot);
 }
 
 function isRelativeToRoot(projectRoot: string, cwd: string): boolean {
-  const relative = path.win32.relative(projectRoot, cwd);
-  return relative === "" || (!relative.startsWith("..") && !path.win32.isAbsolute(relative));
+  const pathModule = getPathModule(projectRoot, cwd);
+  const relative = normalizeRelativePath(pathModule.relative(projectRoot, cwd));
+  return relative === "" || (!relative.startsWith("..") && !pathModule.isAbsolute(relative));
 }
 
 export function encodeTemplatePathReference(
@@ -26,10 +36,12 @@ export function encodeTemplatePathReference(
   const normalizedCwd = normalizeCwd(cwd);
   const normalizedRoot = normalizeRoot(projectRoot);
   if (normalizedRoot && isRelativeToRoot(normalizedRoot, normalizedCwd)) {
-    const relative = path.win32.relative(normalizedRoot, normalizedCwd) || ".";
+    const relative =
+      normalizeRelativePath(getPathModule(normalizedRoot, normalizedCwd).relative(normalizedRoot, normalizedCwd)) ||
+      ".";
     return {
       kind: "relative",
-      value: normalizeWindowsPath(relative),
+      value: relative,
     };
   }
 
@@ -48,7 +60,7 @@ export function resolveTemplatePathReference(
   }
 
   if (reference.kind === "absolute") {
-    return normalizeWindowsPath(reference.value);
+    return normalizeFilePath(reference.value);
   }
 
   const normalizedRoot = normalizeRoot(projectRoot);
@@ -56,5 +68,7 @@ export function resolveTemplatePathReference(
     return null;
   }
 
-  return normalizeWindowsPath(path.win32.resolve(normalizedRoot, reference.value));
+  const pathModule = getPathModule(normalizedRoot);
+  const relativeValue = toPathModuleSeparators(reference.value, pathModule);
+  return normalizeFilePath(pathModule.resolve(normalizedRoot, relativeValue));
 }

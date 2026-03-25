@@ -18,6 +18,14 @@ const INITIAL_TERMINAL_MARKERS = /\u001b\[\?9001h|\u001b\[\?1004h/g;
 const INITIAL_TERMINAL_CLEAR =
   /\u001b\[\?25[hl](?=\u001b\[2J)|\u001b\[2J(?:\u001b\[(?:0|)m)?(?:\u001b\[H)?/g;
 
+function decodeIntegrationSignalValue(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export function getPowerShellEncodingBootstrapLines(): string[] {
   return [
     "$script:__TermBagUtf8 = New-Object System.Text.UTF8Encoding($false)",
@@ -75,7 +83,7 @@ export function parseIntegrationChunk(chunk: string): ParsedIntegrationChunk {
   const promptSignals: string[] = [];
   const commandSignals: string[] = [];
   let sanitized = chunk.replace(OSC_CWD_REGEX, (_match, cwd) => {
-    cwdSignals.push(decodeURIComponent(cwd));
+    cwdSignals.push(decodeIntegrationSignalValue(cwd));
     return "";
   });
   sanitized = sanitized.replace(OSC_PROMPT_REGEX, (_match, prompt) => {
@@ -83,7 +91,7 @@ export function parseIntegrationChunk(chunk: string): ParsedIntegrationChunk {
     return "";
   });
   sanitized = sanitized.replace(OSC_COMMAND_REGEX, (_match, command) => {
-    commandSignals.push(decodeURIComponent(command));
+    commandSignals.push(decodeIntegrationSignalValue(command));
     return "";
   });
 

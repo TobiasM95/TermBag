@@ -8,7 +8,7 @@ import {
   flattenLayoutLeafSessionIds,
   getLayoutPresetLeafCount,
 } from "../../shared/layout.js";
-import { deriveTabTitle, normalizeWindowsPath } from "../../shared/paths.js";
+import { deriveTabTitle, normalizeFilePath } from "../../shared/paths.js";
 import { normalizeProjectKuerzel } from "../../shared/project-kuerzel.js";
 import {
   findFirstTemplatePaneId,
@@ -67,7 +67,7 @@ export class AppService {
   }
 
   bootstrap(): BootstrapData {
-    const projects = this.database.listProjects();
+    const projects = this.database.listProjects().map((project) => this.normalizeProject(project));
     return {
       projects,
       shellProfiles: this.shellProfiles,
@@ -77,14 +77,14 @@ export class AppService {
   }
 
   getProjectWorkspace(projectId: string): ProjectWorkspace {
-    const project = this.requireProject(projectId);
+    const project = this.normalizeProject(this.requireProject(projectId));
     const rootPathMissing = this.isConfiguredProjectRootMissing(project);
     const tabs = this.database.listTabsForProject(projectId).map((tab) =>
-      this.normalizeTabState(tab),
+      this.normalizeTabState(tab, project),
     );
     const workspaceTabs: WorkspaceTab[] = tabs.map((tab) => ({
       ...tab,
-      sessions: this.database.listSessionsForTab(tab.id).map((session) => ({
+      sessions: this.normalizeSessionsForProject(project, tab.id).map((session) => ({
         ...session,
         runtime: this.ptyManager.getRuntimeSummary(session.id),
       })),
@@ -109,7 +109,7 @@ export class AppService {
       id: crypto.randomUUID(),
       name: input.name.trim(),
       kuerzel: normalizeProjectKuerzel(input.kuerzel),
-      rootPath: normalizeWindowsPath(input.rootPath),
+      rootPath: normalizeFilePath(input.rootPath),
       defaultShellProfileId: defaultProfileId,
     });
 
@@ -123,8 +123,8 @@ export class AppService {
       ...existing,
       name: input.name.trim(),
       kuerzel: normalizeProjectKuerzel(input.kuerzel),
-      rootPath: normalizeWindowsPath(input.rootPath),
-      defaultShellProfileId: input.defaultShellProfileId,
+      rootPath: normalizeFilePath(input.rootPath),
+      defaultShellProfileId: this.resolveAvailableShellProfileId(input.defaultShellProfileId),
     });
     return this.getProjectWorkspace(input.id);
   }
@@ -137,7 +137,7 @@ export class AppService {
   }
 
   saveProjectAsTemplate(input: SaveProjectAsTemplateInput): WorkspaceTemplate[] {
-    const project = this.requireProject(input.projectId);
+    const project = this.normalizeProject(this.requireProject(input.projectId));
     const name = input.name.trim();
     if (!name) {
       throw new Error("Template name is required.");
@@ -183,7 +183,7 @@ export class AppService {
   }
 
   async applyTemplate(input: ApplyTemplateInput): Promise<ProjectWorkspace> {
-    const project = this.requireProject(input.projectId);
+    const project = this.normalizeProject(this.requireProject(input.projectId));
     const template = this.requireTemplate(input.templateId);
     if (template.tabs.length === 0) {
       throw new Error("Template does not contain any tabs.");
@@ -253,7 +253,7 @@ export class AppService {
   }
 
   createTab(input: CreateTabInput): ProjectWorkspace {
-    const project = this.requireProject(input.projectId);
+    const project = this.normalizeProject(this.requireProject(input.projectId));
     const shellProfileId = input.shellProfileId ?? project.defaultShellProfileId;
     const shellProfile = this.requireShellProfile(shellProfileId);
     const cwd = this.resolveProjectDefaultCwd(project);
@@ -309,7 +309,8 @@ export class AppService {
 
   applyLayoutPreset(input: ApplyLayoutPresetInput): ProjectWorkspace {
     const tab = this.normalizeTabState(this.requireTab(input.tabId));
-    let sessions = this.requireSessionsForTab(tab.id);
+    const project = this.normalizeProject(this.requireProject(tab.projectId));
+    let sessions = this.normalizeSessionsForProject(project, tab.id);
     const requiredLeafCount = getLayoutPresetLeafCount(input.presetId);
 
     if (sessions.length < requiredLeafCount) {
@@ -349,7 +350,8 @@ export class AppService {
 
   setFocusedSession(input: SetFocusedSessionInput): ProjectWorkspace {
     const tab = this.normalizeTabState(this.requireTab(input.tabId));
-    const sessions = this.requireSessionsForTab(tab.id);
+    const project = this.normalizeProject(this.requireProject(tab.projectId));
+    const sessions = this.normalizeSessionsForProject(project, tab.id);
     const targetSession = sessions.find((session) => session.id === input.sessionId);
     if (!targetSession) {
       throw new Error(`Session does not belong to tab: ${input.sessionId}`);
@@ -379,9 +381,12 @@ export class AppService {
   }
 
   async activateSession(input: ActivateSessionInput): Promise<HydratedSession> {
-    const session = this.requireSession(input.sessionId);
-    const tab = this.normalizeTabState(this.requireTab(session.tabId));
-    const project = this.requireProject(tab.projectId);
+    const rawSession = this.requireSession(input.sessionId);
+    const tab = this.normalizeTabState(this.requireTab(rawSession.tabId));
+    const project = this.normalizeProject(this.requireProject(tab.projectId));
+    const session =
+      this.normalizeSessionsForProject(project, tab.id).find((entry) => entry.id === rawSession.id) ??
+      rawSession;
     const shellProfile = this.requireShellProfile(session.shellProfileId);
     this.database.markTabActivated(tab.id);
 
@@ -411,9 +416,12 @@ export class AppService {
   }
 
   async restartSession(input: ActivateSessionInput): Promise<HydratedSession> {
-    const session = this.requireSession(input.sessionId);
-    const tab = this.normalizeTabState(this.requireTab(session.tabId));
-    const project = this.requireProject(tab.projectId);
+    const rawSession = this.requireSession(input.sessionId);
+    const tab = this.normalizeTabState(this.requireTab(rawSession.tabId));
+    const project = this.normalizeProject(this.requireProject(tab.projectId));
+    const session =
+      this.normalizeSessionsForProject(project, tab.id).find((entry) => entry.id === rawSession.id) ??
+      rawSession;
     const shellProfile = this.requireShellProfile(session.shellProfileId);
     const restarted = await this.ptyManager.restartSession(
       input,
@@ -478,8 +486,9 @@ export class AppService {
     });
   }
 
-  private normalizeTabState(tab: SavedWorkspaceTab): SavedWorkspaceTab {
-    const sessions = this.requireSessionsForTab(tab.id);
+  private normalizeTabState(tab: SavedWorkspaceTab, project?: Project): SavedWorkspaceTab {
+    const normalizedProject = project ?? this.normalizeProject(this.requireProject(tab.projectId));
+    const sessions = this.normalizeSessionsForProject(normalizedProject, tab.id);
     const sessionIds = new Set(sessions.map((session) => session.id));
     const hasValidFocusedSession = sessionIds.has(tab.focusedSessionId);
     const layoutSessionIds = collectLayoutSessionIds(tab.layout);
@@ -695,6 +704,56 @@ export class AppService {
       throw new Error(`Tab has no sessions: ${tabId}`);
     }
     return sessions;
+  }
+
+  private normalizeProject(project: Project): Project {
+    const normalizedRootPath = normalizeFilePath(project.rootPath);
+    const normalizedDefaultShellProfileId = this.resolveAvailableShellProfileId(
+      project.defaultShellProfileId,
+    );
+
+    if (
+      normalizedRootPath === project.rootPath &&
+      normalizedDefaultShellProfileId === project.defaultShellProfileId
+    ) {
+      return project;
+    }
+
+    return this.database.updateProject({
+      ...project,
+      rootPath: normalizedRootPath,
+      defaultShellProfileId: normalizedDefaultShellProfileId,
+    });
+  }
+
+  private normalizeSessionsForProject(
+    project: Project,
+    tabId: string,
+  ): SavedTerminalSession[] {
+    const fallbackShellProfileId = this.resolveAvailableShellProfileId(
+      project.defaultShellProfileId,
+    );
+
+    return this.requireSessionsForTab(tabId).map((session) => {
+      if (this.isLaunchableShellProfile(session.shellProfileId)) {
+        return session;
+      }
+
+      return this.database.updateSession({
+        ...session,
+        shellProfileId: fallbackShellProfileId,
+      });
+    });
+  }
+
+  private isLaunchableShellProfile(shellProfileId: string): boolean {
+    return this.shellCatalog.isAvailable(shellProfileId);
+  }
+
+  private resolveAvailableShellProfileId(shellProfileId: string): string {
+    return this.isLaunchableShellProfile(shellProfileId)
+      ? shellProfileId
+      : this.shellCatalog.resolveDefaultProfileId();
   }
 
   private requireShellProfile(shellProfileId: string): ShellProfile {
