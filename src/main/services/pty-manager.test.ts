@@ -79,6 +79,7 @@ function createRuntimeHarness(options?: {
   const project: Project = {
     id: "project-1",
     name: "Repo",
+    kuerzel: null,
     rootPath: "C:\\Work\\Repo",
     defaultShellProfileId: options?.shellProfileId ?? "pwsh",
     createdAt: new Date().toISOString(),

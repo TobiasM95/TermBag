@@ -9,6 +9,7 @@ import {
   getLayoutPresetLeafCount,
 } from "../../shared/layout.js";
 import { deriveTabTitle, normalizeWindowsPath } from "../../shared/paths.js";
+import { normalizeProjectKuerzel } from "../../shared/project-kuerzel.js";
 import {
   findFirstTemplatePaneId,
   mapPersistedLayoutToTemplateLayout,
@@ -107,6 +108,7 @@ export class AppService {
     const project = this.database.createProject({
       id: crypto.randomUUID(),
       name: input.name.trim(),
+      kuerzel: normalizeProjectKuerzel(input.kuerzel),
       rootPath: normalizeWindowsPath(input.rootPath),
       defaultShellProfileId: defaultProfileId,
     });
@@ -120,6 +122,7 @@ export class AppService {
     this.database.updateProject({
       ...existing,
       name: input.name.trim(),
+      kuerzel: normalizeProjectKuerzel(input.kuerzel),
       rootPath: normalizeWindowsPath(input.rootPath),
       defaultShellProfileId: input.defaultShellProfileId,
     });

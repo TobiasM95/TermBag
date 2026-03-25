@@ -32,6 +32,7 @@ describe("useAppStore", () => {
         {
           id: "project-1",
           name: "Repo",
+          kuerzel: null,
           rootPath: "C:\\Work\\Repo",
           defaultShellProfileId: "pwsh",
           createdAt: "2026-03-01T12:00:00.000Z",
@@ -46,6 +47,7 @@ describe("useAppStore", () => {
           project: {
             id: "project-1",
             name: "Repo",
+            kuerzel: null,
             rootPath: "C:\\Work\\Repo",
             defaultShellProfileId: "pwsh",
             createdAt: "2026-03-01T12:00:00.000Z",

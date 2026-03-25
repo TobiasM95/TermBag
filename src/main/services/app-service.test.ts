@@ -43,6 +43,7 @@ class FakeDatabaseService {
   createProject(params: {
     id: string;
     name: string;
+    kuerzel?: string | null;
     rootPath: string;
     defaultShellProfileId: string;
   }): Project {
@@ -50,6 +51,7 @@ class FakeDatabaseService {
     const project: Project = {
       id: params.id,
       name: params.name,
+      kuerzel: params.kuerzel ?? null,
       rootPath: params.rootPath,
       defaultShellProfileId: params.defaultShellProfileId,
       createdAt: timestamp,
@@ -338,9 +340,11 @@ describe("AppService", () => {
 
     const workspace = service.createProject({
       name: "Repo",
+      kuerzel: "tb",
       rootPath: "C:\\Work\\Repo",
     });
 
+    expect(workspace.project.kuerzel).toBe("tb");
     expect(workspace.tabs).toHaveLength(1);
     expect(workspace.tabs[0]!.sessions).toHaveLength(1);
     expect(workspace.tabs[0]!.focusedSessionId).toBe(workspace.tabs[0]!.sessions[0]!.id);
@@ -350,6 +354,48 @@ describe("AppService", () => {
         workspace.tabs[0]!.sessions[0]!.id,
       );
     }
+  });
+
+  it("clears a saved kürzel when the edit input is left empty", () => {
+    const database = new FakeDatabaseService();
+    const service = new AppService(
+      database as never,
+      new FakeShellCatalog() as never,
+      new FakePtyManager() as never,
+    );
+
+    const workspace = service.createProject({
+      name: "Repo",
+      kuerzel: "tb",
+      rootPath: "C:\\Work\\Repo",
+    });
+
+    const updatedWorkspace = service.updateProject({
+      id: workspace.project.id,
+      name: workspace.project.name,
+      kuerzel: "",
+      rootPath: workspace.project.rootPath,
+      defaultShellProfileId: workspace.project.defaultShellProfileId,
+    });
+
+    expect(updatedWorkspace.project.kuerzel).toBeNull();
+    expect(database.getProject(workspace.project.id)?.kuerzel).toBeNull();
+  });
+
+  it("rejects kürzel values longer than three letters", () => {
+    const service = new AppService(
+      new FakeDatabaseService() as never,
+      new FakeShellCatalog() as never,
+      new FakePtyManager() as never,
+    );
+
+    expect(() =>
+      service.createProject({
+        name: "Repo",
+        kuerzel: "TERM",
+        rootPath: "C:\\Work\\Repo",
+      }),
+    ).toThrow("Kürzel must be 1 to 3 letters.");
   });
 
   it("still enforces the minimum-one-tab rule and closes all sessions when a tab is removed", async () => {

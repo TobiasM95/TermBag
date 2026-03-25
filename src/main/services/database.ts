@@ -21,6 +21,7 @@ import type {
 interface CreateProjectParams {
   id: string;
   name: string;
+  kuerzel: string | null;
   rootPath: string;
   defaultShellProfileId: string;
 }
@@ -83,6 +84,7 @@ const MIGRATIONS = [
       CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
+        kuerzel TEXT,
         root_path TEXT NOT NULL,
         default_shell_profile_id TEXT NOT NULL,
         created_at TEXT NOT NULL,
@@ -149,6 +151,7 @@ function mapProject(row: Record<string, unknown>): Project {
   return {
     id: String(row.id),
     name: String(row.name),
+    kuerzel: row.kuerzel ? String(row.kuerzel) : null,
     rootPath: String(row.root_path),
     defaultShellProfileId: String(row.default_shell_profile_id),
     createdAt: String(row.created_at),
@@ -575,6 +578,23 @@ export class DatabaseService {
         throw error;
       }
     }
+
+    if (!existing.has("014_project_kuerzel")) {
+      this.db.exec("BEGIN");
+      try {
+        const projectColumns = new Set(this.getTableColumns("projects"));
+        if (!projectColumns.has("kuerzel")) {
+          this.db.exec("ALTER TABLE projects ADD COLUMN kuerzel TEXT");
+        }
+        this.db
+          .prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
+          .run("014_project_kuerzel", nowIso());
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
   }
 
   private migrateTabsToSessions(): void {
@@ -839,7 +859,7 @@ export class DatabaseService {
   listProjects(): Project[] {
     const rows = this.db
       .prepare(
-        `SELECT id, name, root_path, default_shell_profile_id, created_at, updated_at
+        `SELECT id, name, kuerzel, root_path, default_shell_profile_id, created_at, updated_at
          FROM projects
          ORDER BY updated_at DESC, created_at DESC`,
       )
@@ -850,7 +870,7 @@ export class DatabaseService {
   getProject(projectId: string): Project | null {
     const row = this.db
       .prepare(
-        `SELECT id, name, root_path, default_shell_profile_id, created_at, updated_at
+        `SELECT id, name, kuerzel, root_path, default_shell_profile_id, created_at, updated_at
          FROM projects
          WHERE id = ?`,
       )
@@ -863,12 +883,13 @@ export class DatabaseService {
     this.db
       .prepare(
         `INSERT INTO projects (
-          id, name, root_path, default_shell_profile_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)`,
+          id, name, kuerzel, root_path, default_shell_profile_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         params.id,
         params.name,
+        params.kuerzel,
         params.rootPath,
         params.defaultShellProfileId,
         timestamp,
@@ -881,11 +902,12 @@ export class DatabaseService {
     this.db
       .prepare(
         `UPDATE projects
-         SET name = ?, root_path = ?, default_shell_profile_id = ?, updated_at = ?
+         SET name = ?, kuerzel = ?, root_path = ?, default_shell_profile_id = ?, updated_at = ?
          WHERE id = ?`,
       )
       .run(
         project.name,
+        project.kuerzel,
         project.rootPath,
         project.defaultShellProfileId,
         nowIso(),

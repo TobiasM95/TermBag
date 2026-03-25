@@ -8,6 +8,11 @@ import {
   createSessionBorderPalette,
   normalizeSessionBorderColor,
 } from "../shared/session-colors";
+import {
+  getProjectCollapsedKuerzel,
+  PROJECT_KUERZEL_MAX_LENGTH,
+  sanitizeProjectKuerzelInput,
+} from "../shared/project-kuerzel";
 import { TerminalPane } from "./components/TerminalPane";
 import { useAppStore } from "./store/app-store";
 import { createTerminalPerformanceMeter } from "../shared/terminal-performance";
@@ -1116,7 +1121,7 @@ export function App() {
                 >
                   {sidebarCollapsed ? (
                     <span className="project-card__mono">
-                      {project.name.trim().charAt(0).toUpperCase() || "?"}
+                      {getProjectCollapsedKuerzel(project)}
                     </span>
                   ) : (
                     <>
@@ -2522,6 +2527,7 @@ function ProjectBootstrapPanel({
   onSubmit,
 }: ProjectBootstrapPanelProps) {
   const [name, setName] = useState("");
+  const [kuerzel, setKuerzel] = useState("");
   const [rootPath, setRootPath] = useState("");
   const [defaultShellProfileId, setDefaultShellProfileId] = useState(
     shellProfiles.find((profile) => profile.available)?.id ?? "cmd",
@@ -2535,6 +2541,15 @@ function ProjectBootstrapPanel({
           value={name}
           placeholder="My repo"
           onChange={(event) => setName(event.target.value)}
+        />
+      </label>
+      <label>
+        <span>Kürzel</span>
+        <input
+          value={kuerzel}
+          maxLength={PROJECT_KUERZEL_MAX_LENGTH}
+          placeholder="ABC"
+          onChange={(event) => setKuerzel(sanitizeProjectKuerzelInput(event.target.value))}
         />
       </label>
       <label>
@@ -2565,6 +2580,7 @@ function ProjectBootstrapPanel({
         onClick={() =>
           void onSubmit({
             name,
+            kuerzel,
             rootPath,
             defaultShellProfileId,
           })
@@ -2627,6 +2643,7 @@ function ProjectModal({
   onSubmit,
 }: ProjectModalProps) {
   const [name, setName] = useState(initialProject?.name ?? "");
+  const [kuerzel, setKuerzel] = useState(initialProject?.kuerzel ?? "");
   const [rootPath, setRootPath] = useState(initialProject?.rootPath ?? "");
   const [defaultShellProfileId, setDefaultShellProfileId] = useState(
     initialProject?.defaultShellProfileId ??
@@ -2641,6 +2658,15 @@ function ProjectModal({
         <label>
           <span>Name</span>
           <input value={name} onChange={(event) => setName(event.target.value)} />
+        </label>
+        <label>
+          <span>Kürzel</span>
+          <input
+            value={kuerzel}
+            maxLength={PROJECT_KUERZEL_MAX_LENGTH}
+            placeholder="ABC"
+            onChange={(event) => setKuerzel(sanitizeProjectKuerzelInput(event.target.value))}
+          />
         </label>
         <label>
           <span>Default path</span>
@@ -2673,11 +2699,13 @@ function ProjectModal({
                   ? {
                       id: initialProject.id,
                       name,
+                      kuerzel,
                       rootPath,
                       defaultShellProfileId,
                     }
                   : {
                       name,
+                      kuerzel,
                       rootPath,
                       defaultShellProfileId,
                     },

@@ -5,6 +5,7 @@ export type HistorySource = "integration" | "input_capture" | "heuristic";
 export interface Project {
   id: string;
   name: string;
+  kuerzel: string | null;
   rootPath: string;
   defaultShellProfileId: string;
   createdAt: string;
@@ -204,6 +205,7 @@ export interface ProjectWorkspace {
 
 export interface CreateProjectInput {
   name: string;
+  kuerzel?: string;
   rootPath: string;
   defaultShellProfileId?: string;
 }
@@ -211,6 +213,7 @@ export interface CreateProjectInput {
 export interface UpdateProjectInput {
   id: string;
   name: string;
+  kuerzel?: string;
   rootPath: string;
   defaultShellProfileId: string;
 }
