@@ -1,6 +1,6 @@
 {
   "name": "termbag",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "author": "TobiasM95",
   "description": "Desktop terminal workspace with lazy restore and local persistence.",
